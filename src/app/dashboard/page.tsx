@@ -90,7 +90,6 @@ export default function DashboardPage() {
       return;
     }
 
-    // Refresh list
     if (profile) await loadAllUsersIfCEO(profile);
   }
 
@@ -100,15 +99,11 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    (async () => {
-      await loadMyProfile();
-    })();
+    loadMyProfile();
   }, []);
 
   useEffect(() => {
-    if (profile) {
-      loadAllUsersIfCEO(profile);
-    }
+    if (profile) loadAllUsersIfCEO(profile);
   }, [profile]);
 
   if (loading) {
@@ -166,7 +161,6 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* CEO Admin Panel */}
       {isCEO && (
         <div style={{ marginTop: 24, padding: 16, border: "2px solid #111" }}>
           <h2>CEO Admin Panel</h2>
@@ -192,9 +186,33 @@ export default function DashboardPage() {
               >
                 <thead>
                   <tr>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>Name</th>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>Role</th>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>Actions</th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        borderBottom: "1px solid #ccc",
+                        padding: 8,
+                      }}
+                    >
+                      Name
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        borderBottom: "1px solid #ccc",
+                        padding: 8,
+                      }}
+                    >
+                      Role
+                    </th>
+                    <th
+                      style={{
+                        textAlign: "left",
+                        borderBottom: "1px solid #ccc",
+                        padding: 8,
+                      }}
+                    >
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -219,10 +237,18 @@ export default function DashboardPage() {
                           </>
                         ) : (
                           <>
-                            <button onClick={() => updateUserRole(u.id, "STAFF")}>Set STAFF</button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "ADMIN")}>Set ADMIN</button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "CLIENT")}>Set CLIENT</button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "PENDING")}>Set PENDING</button>
+                            <button onClick={() => updateUserRole(u.id, "STAFF")}>
+                              Set STAFF
+                            </button>{" "}
+                            <button onClick={() => updateUserRole(u.id, "ADMIN")}>
+                              Set ADMIN
+                            </button>{" "}
+                            <button onClick={() => updateUserRole(u.id, "CLIENT")}>
+                              Set CLIENT
+                            </button>{" "}
+                            <button onClick={() => updateUserRole(u.id, "PENDING")}>
+                              Set PENDING
+                            </button>
                           </>
                         )}
                       </td>
@@ -241,21 +267,3 @@ export default function DashboardPage() {
     </main>
   );
 }
-
-{profile?.role === "CEO" && (
-  <section style={{ marginTop: 40 }}>
-    <h2>CEO Admin Panel</h2>
-    <p>Manage users and approvals</p>
-
-    <div
-      style={{
-        marginTop: 16,
-        padding: 16,
-        border: "1px solid #ccc",
-        borderRadius: 6,
-      }}
-    >
-      <p>Loading users...</p>
-    </div>
-  </section>
-)}
