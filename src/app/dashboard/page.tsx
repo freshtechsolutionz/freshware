@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { useRouter } from "next/navigation";
+
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -16,11 +18,14 @@ type Profile = {
 };
 
 export default function DashboardPage() {
+  const router = useRouter();
+
   const [email, setEmail] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
 
   // CEO panel state
   const [users, setUsers] = useState<Profile[]>([]);
@@ -94,9 +99,11 @@ export default function DashboardPage() {
   }
 
   async function logout() {
-    await supabase.auth.signOut();
-    window.location.href = "/login";
-  }
+  await supabase.auth.signOut();
+  router.push("/login");
+  router.refresh();
+}
+
 
   useEffect(() => {
     loadMyProfile();

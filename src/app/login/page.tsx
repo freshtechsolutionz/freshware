@@ -25,9 +25,14 @@ export default function LoginPage() {
       return;
     }
 
-    setMsg("Logged in! Redirecting...");
-    router.push("/dashboard/sales");
-    router.refresh(); // important for server components
+setMsg("Logged in! Redirecting...");
+
+const next =
+  new URLSearchParams(window.location.search).get("next") || "/dashboard/sales";
+
+router.push(next);
+router.refresh();
+
   }
 
   return (
