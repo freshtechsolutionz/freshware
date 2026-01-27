@@ -26,7 +26,7 @@ export default async function SalesPage() {
     return (
       <div style={{ padding: 20 }}>
         <h2>Sales Pipeline</h2>
-        <p style={{ color: "crimson" }}>Error: {error.message}</p>
+        <p style={{ color: "blue" }}>Error: {error.message}</p>
       </div>
     );
   }
