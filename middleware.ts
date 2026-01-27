@@ -21,12 +21,18 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  const { data } = await supabase.auth.getUser();
-  const user = data?.user;
+  // Safely check auth (ignore refresh token errors)
+  let user = null;
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data?.user ?? null;
+  } catch {
+    user = null;
+  }
 
   const path = request.nextUrl.pathname;
 
-  // ✅ protect all dashboard routes
+  // 🔒 Protect all dashboard routes
   if (path.startsWith("/dashboard") && !user) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", path);
