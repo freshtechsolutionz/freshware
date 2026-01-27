@@ -38,7 +38,14 @@ export default function DashboardPage() {
 
     const { data: authData, error: authErr } = await supabase.auth.getUser();
     if (authErr || !authData?.user) {
-      setError("Auth session missing! Please log in again.");
+      if (authErr || !authData?.user) {
+  setLoading(false);
+  await supabase.auth.signOut();
+  router.push("/login?next=/dashboard");
+  router.refresh();
+  return;
+}
+
       setLoading(false);
       return;
     }

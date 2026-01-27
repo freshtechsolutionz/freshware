@@ -21,20 +21,21 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // IMPORTANT: this refreshes the session cookie for server components
-  await supabase.auth.getUser();
+  const { data } = await supabase.auth.getUser();
+  const user = data?.user;
+
+  const path = request.nextUrl.pathname;
+
+  // ✅ protect all dashboard routes
+  if (path.startsWith("/dashboard") && !user) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("next", path);
+    return NextResponse.redirect(loginUrl);
+  }
 
   return response;
 }
 
 export const config = {
-  matcher: [
-    /*
-      Run middleware on all routes except:
-      - _next/static
-      - _next/image
-      - favicon
-    */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
-  ],
+  matcher: ["/dashboard/:path*"],
 };
