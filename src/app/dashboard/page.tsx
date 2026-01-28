@@ -214,22 +214,26 @@ export default function DashboardPage() {
                       </td>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
                         {u.role === "PENDING" ? (
-                          <>
-                            <button onClick={() => updateUserRole(u.id, "STAFF")}>
-                              Approve as STAFF
-                            </button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "ADMIN")}>
-                              Approve as ADMIN
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button onClick={() => updateUserRole(u.id, "STAFF")}>Set STAFF</button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "ADMIN")}>Set ADMIN</button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "CLIENT")}>Set CLIENT</button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "PENDING")}>Set PENDING</button>
-                          </>
-                        )}
+  <>
+    <button onClick={() => updateUserRole(u.id, "STAFF")}>
+      Approve as STAFF
+    </button>{" "}
+    <button onClick={() => updateUserRole(u.id, "ADMIN")}>
+      Approve as ADMIN
+    </button>{" "}
+    <button onClick={() => updateUserRole(u.id, "CLIENT")}>
+      Approve as CLIENT
+    </button>
+  </>
+) : (
+  <>
+    <button onClick={() => updateUserRole(u.id, "STAFF")}>Set STAFF</button>{" "}
+    <button onClick={() => updateUserRole(u.id, "ADMIN")}>Set ADMIN</button>{" "}
+    <button onClick={() => updateUserRole(u.id, "CLIENT")}>Set CLIENT</button>{" "}
+    <button onClick={() => updateUserRole(u.id, "PENDING")}>Set PENDING</button>
+  </>
+)}
+
                       </td>
                     </tr>
                   ))}
