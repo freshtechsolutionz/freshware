@@ -1,11 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 
 export default function LoginPage() {
-  const router = useRouter();
   const supabase = supabaseBrowser();
 
   const [email, setEmail] = useState("");
@@ -27,11 +25,17 @@ export default function LoginPage() {
 
 setMsg("Logged in! Redirecting...");
 
-const next =
-  new URLSearchParams(window.location.search).get("next") || "/dashboard/sales";
+const nextParam = new URLSearchParams(window.location.search).get("next");
 
-router.push(next);
-router.refresh();
+// prevent loops like next=/login or blank
+const safeNext =
+  nextParam && nextParam.startsWith("/") && !nextParam.startsWith("/login")
+    ? nextParam
+    : "/dashboard";
+
+window.location.assign(safeNext);
+
+
 
   }
 

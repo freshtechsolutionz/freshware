@@ -1,14 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseBrowser } from "@/lib/supabase/browser";
 import { useRouter } from "next/navigation";
 
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+const supabase = supabaseBrowser();
 
 type Profile = {
   id: string;
@@ -26,7 +22,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-
   // CEO panel state
   const [users, setUsers] = useState<Profile[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -37,25 +32,21 @@ export default function DashboardPage() {
     setError(null);
 
     const { data: authData, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !authData?.user) {
-      if (authErr || !authData?.user) {
-  setLoading(false);
-  await supabase.auth.signOut();
-  router.push("/login?next=/dashboard");
-  router.refresh();
-  return;
-}
+    const user = authData?.user;
 
+    if (authErr || !user) {
       setLoading(false);
+      // send them to login; full reload keeps middleware happy
+      window.location.assign("/login?next=/dashboard");
       return;
     }
 
-    setEmail(authData.user.email ?? null);
+    setEmail(user.email ?? null);
 
     const { data: myProfile, error: profErr } = await supabase
       .from("profiles")
       .select("id, full_name, role, created_at")
-      .eq("id", authData.user.id)
+      .eq("id", user.id)
       .single();
 
     if (profErr) {
@@ -106,14 +97,14 @@ export default function DashboardPage() {
   }
 
   async function logout() {
-  await supabase.auth.signOut();
-  router.push("/login");
-  router.refresh();
-}
-
+    await supabase.auth.signOut();
+    // full reload so cookies/middleware are definitely in sync
+    window.location.assign("/login");
+  }
 
   useEffect(() => {
     loadMyProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -200,31 +191,13 @@ export default function DashboardPage() {
               >
                 <thead>
                   <tr>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #ccc",
-                        padding: 8,
-                      }}
-                    >
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>
                       Name
                     </th>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #ccc",
-                        padding: 8,
-                      }}
-                    >
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>
                       Role
                     </th>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #ccc",
-                        padding: 8,
-                      }}
-                    >
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>
                       Actions
                     </th>
                   </tr>
@@ -251,18 +224,10 @@ export default function DashboardPage() {
                           </>
                         ) : (
                           <>
-                            <button onClick={() => updateUserRole(u.id, "STAFF")}>
-                              Set STAFF
-                            </button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "ADMIN")}>
-                              Set ADMIN
-                            </button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "CLIENT")}>
-                              Set CLIENT
-                            </button>{" "}
-                            <button onClick={() => updateUserRole(u.id, "PENDING")}>
-                              Set PENDING
-                            </button>
+                            <button onClick={() => updateUserRole(u.id, "STAFF")}>Set STAFF</button>{" "}
+                            <button onClick={() => updateUserRole(u.id, "ADMIN")}>Set ADMIN</button>{" "}
+                            <button onClick={() => updateUserRole(u.id, "CLIENT")}>Set CLIENT</button>{" "}
+                            <button onClick={() => updateUserRole(u.id, "PENDING")}>Set PENDING</button>
                           </>
                         )}
                       </td>
