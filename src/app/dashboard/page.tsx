@@ -6,13 +6,20 @@ import { useRouter } from "next/navigation";
 
 const supabase = supabaseBrowser();
 
+/* =========================
+   TYPES
+========================= */
 type Profile = {
   id: string;
   full_name: string | null;
   role: string | null;
+  account_id: string | null;
   created_at?: string;
 };
 
+/* =========================
+   COMPONENT
+========================= */
 export default function DashboardPage() {
   const router = useRouter();
 
@@ -27,6 +34,9 @@ export default function DashboardPage() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
 
+  /* =========================
+     LOAD MY PROFILE
+  ========================= */
   async function loadMyProfile() {
     setLoading(true);
     setError(null);
@@ -35,8 +45,6 @@ export default function DashboardPage() {
     const user = authData?.user;
 
     if (authErr || !user) {
-      setLoading(false);
-      // send them to login; full reload keeps middleware happy
       window.location.assign("/login?next=/dashboard");
       return;
     }
@@ -45,7 +53,7 @@ export default function DashboardPage() {
 
     const { data: myProfile, error: profErr } = await supabase
       .from("profiles")
-      .select("id, full_name, role, created_at")
+      .select("id, full_name, role, account_id, created_at")
       .eq("id", user.id)
       .single();
 
@@ -59,6 +67,9 @@ export default function DashboardPage() {
     setLoading(false);
   }
 
+  /* =========================
+     LOAD USERS (CEO ONLY)
+  ========================= */
   async function loadAllUsersIfCEO(currentProfile: Profile) {
     if (currentProfile.role !== "CEO") return;
 
@@ -67,7 +78,7 @@ export default function DashboardPage() {
 
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, full_name, role, created_at")
+      .select("id, full_name, role, account_id, created_at")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -80,6 +91,9 @@ export default function DashboardPage() {
     setUsersLoading(false);
   }
 
+  /* =========================
+     UPDATE USER ROLE (CEO)
+  ========================= */
   async function updateUserRole(userId: string, newRole: string) {
     setUsersError(null);
 
@@ -96,12 +110,17 @@ export default function DashboardPage() {
     if (profile) await loadAllUsersIfCEO(profile);
   }
 
+  /* =========================
+     LOGOUT
+  ========================= */
   async function logout() {
     await supabase.auth.signOut();
-    // full reload so cookies/middleware are definitely in sync
     window.location.assign("/login");
   }
 
+  /* =========================
+     EFFECTS
+  ========================= */
   useEffect(() => {
     loadMyProfile();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,6 +130,9 @@ export default function DashboardPage() {
     if (profile) loadAllUsersIfCEO(profile);
   }, [profile]);
 
+  /* =========================
+     RENDER STATES
+  ========================= */
   if (loading) {
     return <main style={{ padding: 24 }}>Loading dashboard...</main>;
   }
@@ -135,71 +157,93 @@ export default function DashboardPage() {
     );
   }
 
-  const isPending = profile.role === "PENDING";
-  const isCEO = profile.role === "CEO";
+  /* =========================
+     ROLE FLAGS
+  ========================= */
+  const role = profile.role ?? "PENDING";
+  const isPending = role === "PENDING";
+  const isCEO = role === "CEO";
 
+  /* =========================
+     STEP 2: ROLE-BASED NAV
+  ========================= */
+  const navLinks: { href: string; label: string; roles: string[] }[] = [
+    { href: "/sales", label: "Sales Pipeline", roles: ["CEO","ADMIN","SALES","OPS","MARKETING","STAFF"] },
+    { href: "/contacts", label: "Contacts", roles: ["CEO","ADMIN","SALES","OPS","MARKETING","STAFF"] },
+    { href: "/meetings", label: "Meetings", roles: ["CEO","ADMIN","SALES","OPS","MARKETING","STAFF"] },
+    { href: "/discovery", label: "Discovery Sessions", roles: ["CEO","ADMIN","SALES","OPS","STAFF","MARKETING"] },
+    { href: "/proposals", label: "Proposals", roles: ["CEO","ADMIN","SALES","OPS","STAFF","MARKETING"] },
+    { href: "/projects", label: "Projects", roles: ["CEO","ADMIN","OPS","STAFF","SALES","MARKETING"] },
+    { href: "/tasks", label: "Tasks", roles: ["CEO","ADMIN","SALES","OPS","STAFF","MARKETING"] },
+    { href: "/activities", label: "Activities", roles: ["CEO","ADMIN","SALES","OPS","STAFF","MARKETING"] },
+    { href: "/revenue", label: "Revenue (CEO/Admin)", roles: ["CEO","ADMIN"] },
+  ];
+
+  /* =========================
+     RENDER
+  ========================= */
   return (
-    <main style={{ padding: 24, maxWidth: 900 }}>
+    <main style={{ padding: 24, maxWidth: 1000 }}>
       <h1>Freshware Dashboard</h1>
 
+      {/* USER INFO */}
       <div style={{ marginTop: 12, padding: 12, border: "1px solid #ddd" }}>
-        <div>
-          <b>Logged in as:</b> {email}
-        </div>
-        <div>
-          <b>Name:</b> {profile.full_name ?? "(no name)"}
-        </div>
-        <div>
-          <b>Role:</b> {profile.role ?? "(none)"}
-        </div>
+        <div><b>Logged in as:</b> {email}</div>
+        <div><b>Name:</b> {profile.full_name ?? "(no name)"}</div>
+        <div><b>Role:</b> {profile.role}</div>
+        <div><b>Account:</b> {profile.account_id ?? "(none)"}</div>
       </div>
 
+      {/* ACCESS STATUS */}
       {isPending ? (
         <div style={{ marginTop: 16, padding: 12, border: "1px solid #ccc" }}>
           <h3>Pending Approval ⏳</h3>
-          <p>Your account is created, but still needs approval from the CEO.</p>
+          <p>Your account is created but needs CEO approval.</p>
         </div>
       ) : (
         <div style={{ marginTop: 16, padding: 12, border: "1px solid #ccc" }}>
           <h3>Access Granted ✅</h3>
-          <p>Welcome! Next step: show your KPIs and tools based on your role.</p>
+          <p>Select a tool below to start working.</p>
         </div>
       )}
 
+      {/* STEP 2: TOOLS / NAV */}
+      {!isPending && (
+        <div style={{ marginTop: 16, padding: 12, border: "1px solid #ddd" }}>
+          <h3 style={{ marginTop: 0 }}>Tools</h3>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {navLinks
+              .filter((l) => l.roles.includes(role))
+              .map((l) => (
+                <button key={l.href} onClick={() => router.push(l.href)}>
+                  {l.label}
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* CEO ADMIN PANEL */}
       {isCEO && (
         <div style={{ marginTop: 24, padding: 16, border: "2px solid #111" }}>
           <h2>CEO Admin Panel</h2>
-          <p style={{ marginTop: 6 }}>
-            Approve users and assign roles. (Only visible to CEO.)
-          </p>
+          <p>Approve users and assign roles.</p>
 
           {usersLoading && <p>Loading users...</p>}
           {usersError && <p style={{ color: "crimson" }}>{usersError}</p>}
 
           {!usersLoading && (
-            <div style={{ marginTop: 12 }}>
+            <>
               <div style={{ marginBottom: 10 }}>
                 <b>Total users:</b> {users.length}
               </div>
 
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  fontSize: 14,
-                }}
-              >
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
                 <thead>
                   <tr>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>
-                      Name
-                    </th>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>
-                      Role
-                    </th>
-                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>
-                      Actions
-                    </th>
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>Name</th>
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>Role</th>
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -209,37 +253,23 @@ export default function DashboardPage() {
                         {u.full_name ?? "(no name)"}
                         <div style={{ fontSize: 12, opacity: 0.7 }}>{u.id}</div>
                       </td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>{u.role}</td>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
-                        {u.role ?? "(none)"}
-                      </td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
-                        {u.role === "PENDING" ? (
-  <>
-    <button onClick={() => updateUserRole(u.id, "STAFF")}>
-      Approve as STAFF
-    </button>{" "}
-    <button onClick={() => updateUserRole(u.id, "ADMIN")}>
-      Approve as ADMIN
-    </button>{" "}
-    <button onClick={() => updateUserRole(u.id, "CLIENT")}>
-      Approve as CLIENT
-    </button>
-  </>
-) : (
-  <>
-    <button onClick={() => updateUserRole(u.id, "STAFF")}>Set STAFF</button>{" "}
-    <button onClick={() => updateUserRole(u.id, "ADMIN")}>Set ADMIN</button>{" "}
-    <button onClick={() => updateUserRole(u.id, "CLIENT")}>Set CLIENT</button>{" "}
-    <button onClick={() => updateUserRole(u.id, "PENDING")}>Set PENDING</button>
-  </>
-)}
-
+                        {["STAFF","SALES","OPS","MARKETING","ADMIN","CLIENT","PENDING"].map((r) => (
+                          <button
+                            key={r}
+                            style={{ marginRight: 4 }}
+                            onClick={() => updateUserRole(u.id, r)}
+                          >
+                            Set {r}
+                          </button>
+                        ))}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
+            </>
           )}
         </div>
       )}
