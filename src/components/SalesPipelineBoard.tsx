@@ -310,7 +310,7 @@ export default function SalesPipelineBoard({
 
           <div className="fw-actions">
             <div className="fw-link">
-              <Link href="/dashboard/sales/new">+ Add Opportunity</Link>
+              <Link href="/opportunities">+ Add Opportunity</Link>
             </div>
           </div>
         </div>
