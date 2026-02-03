@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { GoogleAuth } from "google-auth-library";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic"; // no caching while testing
+
+function safeBool(v: any) {
+  return v ? true : false;
+}
 
 function requireEnv(name: string) {
   const v = process.env[name];
@@ -10,11 +15,14 @@ function requireEnv(name: string) {
 }
 
 async function runReport(propertyId: string, startDate: string, endDate: string) {
-  const clientEmail = requireEnv("freshware-ga4-reader@freshware-analytics.iam.gserviceaccount.com");
-  const privateKey = requireEnv("da88c193c2d7bb26c40cdc40a830d1810186cda6").replace(/\\n/g, "\n");
+  const clientEmail = requireEnv("GOOGLE_CLIENT_EMAIL");
+  const privateKey = requireEnv("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n");
 
   const auth = new GoogleAuth({
-    credentials: { client_email: clientEmail, private_key: privateKey },
+    credentials: {
+      client_email: clientEmail,
+      private_key: privateKey,
+    },
     scopes: ["https://www.googleapis.com/auth/analytics.readonly"],
   });
 
@@ -23,6 +31,7 @@ async function runReport(propertyId: string, startDate: string, endDate: string)
 
   const url = `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`;
 
+  // Using activeUsers as “visitors”
   const body = {
     dateRanges: [{ startDate, endDate }],
     metrics: [{ name: "activeUsers" }],
@@ -37,12 +46,14 @@ async function runReport(propertyId: string, startDate: string, endDate: string)
     body: JSON.stringify(body),
   });
 
+  const text = await res.text();
+
   if (!res.ok) {
-    const text = await res.text();
     throw new Error(`GA4 API error ${res.status}: ${text}`);
   }
 
-  const json: any = await res.json();
+  const json: any = JSON.parse(text);
+
   const valueStr =
     json?.rows?.[0]?.metricValues?.[0]?.value ??
     json?.totals?.[0]?.metricValues?.[0]?.value ??
@@ -54,6 +65,11 @@ async function runReport(propertyId: string, startDate: string, endDate: string)
 
 export async function GET() {
   try {
+    // Debug: confirm env vars are visible (without leaking secrets)
+    const hasProperty = safeBool(process.env.GA4_PROPERTY_ID);
+    const hasEmail = safeBool(process.env.GOOGLE_CLIENT_EMAIL);
+    const hasKey = safeBool(process.env.GOOGLE_PRIVATE_KEY);
+
     const propertyId = requireEnv("GA4_PROPERTY_ID");
 
     const [today, last7, last30] = await Promise.all([
@@ -63,13 +79,23 @@ export async function GET() {
     ]);
 
     return NextResponse.json({
+      ok: true,
+      env_seen: { GA4_PROPERTY_ID: hasProperty, GOOGLE_CLIENT_EMAIL: hasEmail, GOOGLE_PRIVATE_KEY: hasKey },
       visitors_today: today,
       visitors_7d: last7,
       visitors_30d: last30,
     });
   } catch (e: any) {
     return NextResponse.json(
-      { error: e?.message ?? "Analytics error" },
+      {
+        ok: false,
+        error: e?.message ?? "Analytics error",
+        env_seen: {
+          GA4_PROPERTY_ID: !!process.env.GA4_PROPERTY_ID,
+          GOOGLE_CLIENT_EMAIL: !!process.env.GOOGLE_CLIENT_EMAIL,
+          GOOGLE_PRIVATE_KEY: !!process.env.GOOGLE_PRIVATE_KEY,
+        },
+      },
       { status: 500 }
     );
   }

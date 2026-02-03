@@ -18,6 +18,26 @@ type Profile = {
   created_at?: string;
 };
 
+type Visitors = {
+  visitors_today: number;
+  visitors_7d: number;
+  visitors_30d: number;
+};
+
+type DashboardKpis = {
+  prospects_open: number;
+  active_projects: number;
+  open_pipeline_amount: number;
+  opportunities_total: number;
+  projects_total: number;
+};
+
+type MeetingCounts = {
+  meetings_today: number;
+  meetings_7d: number;
+  meetings_30d: number;
+};
+
 /* =========================
    COMPONENT
 ========================= */
@@ -35,9 +55,11 @@ export default function DashboardPage() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
 
-  // KPI/Analytics state (CEO + ADMIN)
-  const [kpis, setKpis] = useState<any>(null);
-  const [meetings, setMeetings] = useState<any>(null);
+  // Executive metrics state (CEO + ADMIN)
+  const [kpis, setKpis] = useState<DashboardKpis | null>(null);
+  const [meetings, setMeetings] = useState<MeetingCounts | null>(null);
+  const [visitors, setVisitors] = useState<Visitors | null>(null);
+
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
 
@@ -52,7 +74,6 @@ export default function DashboardPage() {
     const user = authData?.user;
 
     if (authErr || !user) {
-      // full reload keeps cookies/middleware in sync
       window.location.assign("/login?next=/dashboard");
       return;
     }
@@ -115,7 +136,6 @@ export default function DashboardPage() {
       return;
     }
 
-    // refresh list
     if (profile) await loadAllUsersIfCEO(profile);
   }
 
@@ -129,6 +149,7 @@ export default function DashboardPage() {
     setMetricsLoading(true);
     setMetricsError(null);
 
+    // KPI rollup (Freshware DB)
     const kpiRes = await supabase.rpc("get_dashboard_kpis");
     if (kpiRes.error) {
       setMetricsError(kpiRes.error.message);
@@ -136,6 +157,7 @@ export default function DashboardPage() {
       return;
     }
 
+    // Meeting counts (ycbm_bookings)
     const meetRes = await supabase.rpc("get_ycbm_meeting_counts");
     if (meetRes.error) {
       setMetricsError(meetRes.error.message);
@@ -143,9 +165,39 @@ export default function DashboardPage() {
       return;
     }
 
-    setKpis(kpiRes.data?.[0] ?? null);
-    setMeetings(meetRes.data?.[0] ?? null);
+    setKpis((kpiRes.data?.[0] ?? null) as DashboardKpis | null);
+    setMeetings((meetRes.data?.[0] ?? null) as MeetingCounts | null);
+
     setMetricsLoading(false);
+  }
+
+  /* =========================
+     LOAD GA4 VISITORS (CEO + ADMIN)
+  ========================= */
+  async function loadVisitorsIfCeoAdmin(currentProfile: Profile) {
+    const r = currentProfile.role ?? "PENDING";
+    if (!["CEO", "ADMIN"].includes(r)) return;
+
+    try {
+      const res = await fetch("/api/analytics/visitors", { cache: "no-store" });
+      const json = await res.json();
+
+      if (!res.ok) {
+        // Don’t hard-fail the whole dashboard if GA4 is down
+        console.warn("GA4 visitors error:", json?.error || res.statusText);
+        setVisitors(null);
+        return;
+      }
+
+      setVisitors({
+        visitors_today: Number(json.visitors_today || 0),
+        visitors_7d: Number(json.visitors_7d || 0),
+        visitors_30d: Number(json.visitors_30d || 0),
+      });
+    } catch (e: any) {
+      console.warn("GA4 visitors fetch failed:", e?.message);
+      setVisitors(null);
+    }
   }
 
   /* =========================
@@ -167,11 +219,10 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!profile) return;
 
-    // CEO-only
     loadAllUsersIfCEO(profile);
-
-    // CEO + ADMIN analytics
     loadAdminMetrics(profile);
+    loadVisitorsIfCeoAdmin(profile);
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id]);
 
@@ -211,54 +262,18 @@ export default function DashboardPage() {
   const isAdmin = role === "ADMIN";
 
   /* =========================
-     STEP 2: ROLE-BASED NAV
+     ROLE-BASED NAV
   ========================= */
   const navLinks: { href: string; label: string; roles: string[] }[] = [
-    {
-      href: "/sales",
-      label: "Sales Pipeline",
-      roles: ["CEO", "ADMIN", "SALES", "OPS", "MARKETING", "STAFF"],
-    },
-    {
-      href: "/opportunities",
-      label: "Opportunities",
-      roles: ["CEO", "ADMIN", "SALES", "OPS", "MARKETING", "STAFF"],
-    },
-    {
-      href: "/contacts",
-      label: "Contacts",
-      roles: ["CEO", "ADMIN", "SALES", "OPS", "MARKETING", "STAFF"],
-    },
-    {
-      href: "/meetings",
-      label: "Meetings",
-      roles: ["CEO", "ADMIN", "SALES", "OPS", "MARKETING", "STAFF"],
-    },
-    {
-      href: "/discovery",
-      label: "Discovery Sessions",
-      roles: ["CEO", "ADMIN", "SALES", "OPS", "STAFF", "MARKETING"],
-    },
-    {
-      href: "/proposals",
-      label: "Proposals",
-      roles: ["CEO", "ADMIN", "SALES", "OPS", "STAFF", "MARKETING"],
-    },
-    {
-      href: "/projects",
-      label: "Projects",
-      roles: ["CEO", "ADMIN", "OPS", "STAFF", "SALES", "MARKETING"],
-    },
-    {
-      href: "/tasks",
-      label: "Tasks",
-      roles: ["CEO", "ADMIN", "SALES", "OPS", "STAFF", "MARKETING"],
-    },
-    {
-      href: "/activities",
-      label: "Activities",
-      roles: ["CEO", "ADMIN", "SALES", "OPS", "STAFF", "MARKETING"],
-    },
+    { href: "/sales", label: "Sales Pipeline", roles: ["CEO", "ADMIN", "SALES", "OPS", "MARKETING", "STAFF"] },
+    { href: "/opportunities", label: "Opportunities", roles: ["CEO", "ADMIN", "SALES", "OPS", "MARKETING", "STAFF"] },
+    { href: "/contacts", label: "Contacts", roles: ["CEO", "ADMIN", "SALES", "OPS", "MARKETING", "STAFF"] },
+    { href: "/meetings", label: "Meetings", roles: ["CEO", "ADMIN", "SALES", "OPS", "MARKETING", "STAFF"] },
+    { href: "/discovery", label: "Discovery Sessions", roles: ["CEO", "ADMIN", "SALES", "OPS", "STAFF", "MARKETING"] },
+    { href: "/proposals", label: "Proposals", roles: ["CEO", "ADMIN", "SALES", "OPS", "STAFF", "MARKETING"] },
+    { href: "/projects", label: "Projects", roles: ["CEO", "ADMIN", "OPS", "STAFF", "SALES", "MARKETING"] },
+    { href: "/tasks", label: "Tasks", roles: ["CEO", "ADMIN", "SALES", "OPS", "STAFF", "MARKETING"] },
+    { href: "/activities", label: "Activities", roles: ["CEO", "ADMIN", "SALES", "OPS", "STAFF", "MARKETING"] },
     { href: "/revenue", label: "Revenue (CEO/Admin)", roles: ["CEO", "ADMIN"] },
   ];
 
@@ -271,18 +286,10 @@ export default function DashboardPage() {
 
       {/* USER INFO */}
       <div style={{ marginTop: 12, padding: 12, border: "1px solid #ddd" }}>
-        <div>
-          <b>Logged in as:</b> {email}
-        </div>
-        <div>
-          <b>Name:</b> {profile.full_name ?? "(no name)"}
-        </div>
-        <div>
-          <b>Role:</b> {profile.role ?? "(none)"}
-        </div>
-        <div>
-          <b>Account:</b> {profile.account_id ?? "(none)"}
-        </div>
+        <div><b>Logged in as:</b> {email}</div>
+        <div><b>Name:</b> {profile.full_name ?? "(no name)"}</div>
+        <div><b>Role:</b> {profile.role ?? "(none)"}</div>
+        <div><b>Account:</b> {profile.account_id ?? "(none)"}</div>
       </div>
 
       {/* ACCESS STATUS */}
@@ -298,7 +305,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* STEP 2: TOOLS / NAV */}
+      {/* TOOLS / NAV */}
       {!isPending && (
         <div style={{ marginTop: 16, padding: 12, border: "1px solid #ddd" }}>
           <h3 style={{ marginTop: 0 }}>Tools</h3>
@@ -314,12 +321,10 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* CEO + ADMIN KPI CARDS */}
+      {/* EXECUTIVE OVERVIEW (CEO + ADMIN) */}
       {!isPending && (isCEO || isAdmin) && (
         <>
-          {metricsLoading && (
-            <p style={{ marginTop: 14 }}>Loading analytics…</p>
-          )}
+          {metricsLoading && <p style={{ marginTop: 14 }}>Loading analytics…</p>}
 
           {metricsError && (
             <p style={{ marginTop: 14, color: "crimson" }}>
@@ -328,7 +333,11 @@ export default function DashboardPage() {
           )}
 
           {kpis && meetings && (
-            <CeoAdminKpiCards kpis={kpis} meetings={meetings} visitors={null} />
+            <CeoAdminKpiCards
+              kpis={kpis}
+              meetings={meetings}
+              visitors={visitors}
+            />
           )}
         </>
       )}
@@ -348,42 +357,12 @@ export default function DashboardPage() {
                 <b>Total users:</b> {users.length}
               </div>
 
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  fontSize: 14,
-                }}
-              >
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
                 <thead>
                   <tr>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #ccc",
-                        padding: 8,
-                      }}
-                    >
-                      Name
-                    </th>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #ccc",
-                        padding: 8,
-                      }}
-                    >
-                      Role
-                    </th>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        borderBottom: "1px solid #ccc",
-                        padding: 8,
-                      }}
-                    >
-                      Actions
-                    </th>
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>Name</th>
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>Role</th>
+                    <th style={{ textAlign: "left", borderBottom: "1px solid #ccc", padding: 8 }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -391,23 +370,13 @@ export default function DashboardPage() {
                     <tr key={u.id}>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
                         {u.full_name ?? "(no name)"}
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>
-                          {u.id}
-                        </div>
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>{u.id}</div>
                       </td>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
                         {u.role ?? "(none)"}
                       </td>
                       <td style={{ padding: 8, borderBottom: "1px solid #eee" }}>
-                        {[
-                          "STAFF",
-                          "SALES",
-                          "OPS",
-                          "MARKETING",
-                          "ADMIN",
-                          "CLIENT",
-                          "PENDING",
-                        ].map((r) => (
+                        {["STAFF","SALES","OPS","MARKETING","ADMIN","CLIENT","PENDING"].map((r) => (
                           <button
                             key={r}
                             style={{ marginRight: 4, marginBottom: 4 }}
