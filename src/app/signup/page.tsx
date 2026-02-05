@@ -1,53 +1,23 @@
 "use client";
 
-import { useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+export default function SignupRedirectPage() {
+  const router = useRouter();
 
-export default function SignupPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [msg, setMsg] = useState("");
-
-  async function handleSignup() {
-    setMsg("Creating account...");
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: fullName }, // this matches your trigger
-      },
-    });
-
-    if (error) setMsg(error.message);
-    else setMsg("Signup submitted! Check your email to confirm (if email confirmation is ON).");
-  }
+  useEffect(() => {
+    router.replace("/request-access");
+  }, [router]);
 
   return (
-    <main style={{ padding: 24, fontFamily: "Arial", maxWidth: 420 }}>
-      <h2>Create account</h2>
-
-      <label>Full name</label>
-      <input value={fullName} onChange={(e) => setFullName(e.target.value)} style={{ width: "100%", padding: 8, marginBottom: 12 }} />
-
-      <label>Email</label>
-      <input value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: "100%", padding: 8, marginBottom: 12 }} />
-
-      <label>Password</label>
-      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", padding: 8, marginBottom: 12 }} />
-
-      <button onClick={handleSignup} style={{ padding: 10, width: "100%" }}>Sign up</button>
-
-      <p style={{ marginTop: 12 }}>{msg}</p>
-
-      <p style={{ marginTop: 12 }}>
-        Already have an account? <a href="/login">Log in</a>
-      </p>
-    </main>
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white flex items-center justify-center p-6">
+      <div className="w-full max-w-md rounded-3xl border bg-white p-6 shadow-sm">
+        <div className="text-lg font-semibold text-gray-900">Redirecting...</div>
+        <div className="mt-2 text-sm text-gray-600">
+          Freshware is invite-only. Sending you to Request Access.
+        </div>
+      </div>
+    </div>
   );
 }
