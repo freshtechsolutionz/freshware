@@ -53,6 +53,7 @@ export default function AdminAccessRequestsPage() {
   const [query, setQuery] = useState("");
 
   const [workingId, setWorkingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   async function load() {
     setErrorMsg(null);
@@ -85,7 +86,6 @@ export default function AdminAccessRequestsPage() {
     const isAdmin = roleLower === "ceo" || roleLower === "admin";
 
     if (!isAdmin) {
-      // Not authorized: keep it simple and safe
       setRows([]);
       setLoading(false);
       setErrorMsg("You do not have permission to view access requests.");
@@ -115,6 +115,12 @@ export default function AdminAccessRequestsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2200);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   const counts = useMemo(() => {
     const c = { new: 0, approved: 0, denied: 0, all: rows.length };
     for (const r of rows) {
@@ -126,14 +132,13 @@ export default function AdminAccessRequestsPage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return rows
-      .filter((r) => {
-        const s = normalizeStatus(r.status);
-        if (activeTab !== "all" && s !== activeTab) return false;
-        if (!q) return true;
-        const hay = `${r.full_name} ${r.email} ${r.company ?? ""} ${r.reason ?? ""}`.toLowerCase();
-        return hay.includes(q);
-      });
+    return rows.filter((r) => {
+      const s = normalizeStatus(r.status);
+      if (activeTab !== "all" && s !== activeTab) return false;
+      if (!q) return true;
+      const hay = `${r.full_name} ${r.email} ${r.company ?? ""} ${r.reason ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
   }, [rows, activeTab, query]);
 
   async function setStatus(id: string, nextStatus: "approved" | "denied") {
@@ -159,6 +164,7 @@ export default function AdminAccessRequestsPage() {
       return;
     }
 
+    setToast(nextStatus === "approved" ? "Approved" : "Denied");
     await load();
   }
 
@@ -171,7 +177,11 @@ export default function AdminAccessRequestsPage() {
       `If you need to set your password, click "Forgot password" on the login page.\n`;
 
     navigator.clipboard.writeText(text);
+    setToast("Invite email copied");
   }
+
+  const roleLower = (profile?.role ?? "").toLowerCase();
+  const isAdmin = roleLower === "ceo" || roleLower === "admin";
 
   if (loading) {
     return (
@@ -199,156 +209,170 @@ export default function AdminAccessRequestsPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/admin" className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50">
+          <Link
+            href="/admin"
+            className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+          >
             Back to Admin
           </Link>
-          <Link href="/" className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50">
+          <Link
+            href="/"
+            className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+          >
             Portal entry
           </Link>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-6 pb-16">
+        {toast && (
+          <div className="mb-4 rounded-2xl border bg-white p-3 text-sm font-semibold text-gray-900 shadow-sm">
+            {toast}
+          </div>
+        )}
+
         {errorMsg && (
           <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {errorMsg}
           </div>
         )}
 
-        <section className="rounded-3xl border bg-white p-6 shadow-sm">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex flex-wrap gap-2">
-              <TabButton active={activeTab === "new"} onClick={() => setActiveTab("new")} label={`New (${counts.new})`} />
-              <TabButton active={activeTab === "approved"} onClick={() => setActiveTab("approved")} label={`Approved (${counts.approved})`} />
-              <TabButton active={activeTab === "denied"} onClick={() => setActiveTab("denied")} label={`Denied (${counts.denied})`} />
-              <TabButton active={activeTab === "all"} onClick={() => setActiveTab("all")} label={`All (${counts.all})`} />
-            </div>
-
-            <div className="w-full lg:w-[360px]">
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search name, email, company, reason"
-                className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10"
-              />
+        {!isAdmin ? (
+          <div className="rounded-3xl border bg-white p-8 shadow-sm">
+            <div className="text-lg font-semibold text-gray-900">Not authorized</div>
+            <div className="mt-2 text-sm text-gray-600">
+              You do not have permission to view access requests.
             </div>
           </div>
-
-          <div className="mt-6 grid grid-cols-1 gap-3">
-            {filtered.length === 0 ? (
-              <div className="rounded-2xl border bg-gray-50 p-6 text-sm text-gray-600">
-                No requests found for this view.
-              </div>
-            ) : (
-              filtered.map((r) => (
-                <div key={r.id} className="rounded-3xl border bg-white p-5">
-                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-base font-semibold text-gray-900">{r.full_name}</div>
-                        <StatusPill status={normalizeStatus(r.status)} />
-                      </div>
-
-                      <div className="mt-1 text-sm text-gray-700 break-all">{r.email}</div>
-
-                      <div className="mt-2 text-sm text-gray-600">
-                        <span className="font-semibold text-gray-900">Requested:</span>{" "}
-                        {formatDateTime(r.created_at)}
-                        {r.company ? (
-                          <>
-                            {" "}
-                            <span className="text-gray-400">•</span>{" "}
-                            <span className="font-semibold text-gray-900">Company:</span> {r.company}
-                          </>
-                        ) : null}
-                      </div>
-
-                      {r.reason ? (
-                        <div className="mt-3 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                          <div className="text-xs font-semibold text-gray-700">Reason</div>
-                          <div className="mt-1">{r.reason}</div>
-                        </div>
-                      ) : null}
-
-                      {normalizeStatus(r.status) !== "new" ? (
-                        <div className="mt-3 text-xs text-gray-500">
-                          Reviewed at {r.reviewed_at ? formatDateTime(r.reviewed_at) : "unknown"}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="flex flex-col gap-2 w-full md:w-[220px]">
-                      {normalizeStatus(r.status) === "new" ? (
-                        <>
-                          <button
-                            onClick={() => setStatus(r.id, "approved")}
-                            disabled={workingId === r.id}
-                            className="rounded-2xl px-4 py-2 text-sm font-semibold bg-black text-white hover:opacity-90 disabled:opacity-50"
-                          >
-                            {workingId === r.id ? "Working..." : "Approve"}
-                          </button>
-                          <button
-                            onClick={() => setStatus(r.id, "denied")}
-                            disabled={workingId === r.id}
-                            className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
-                          >
-                            {workingId === r.id ? "Working..." : "Deny"}
-                          </button>
-                        </>
-                      ) : (
-                        <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                          <div className="text-xs font-semibold text-gray-700">Next step</div>
-                          <div className="mt-1">
-                            {normalizeStatus(r.status) === "approved"
-                              ? "Create the Auth user and profile, then send the invite message."
-                              : "No further action required."}
-                          </div>
-                        </div>
-                      )}
-
-                      <button
-                        onClick={() => copyInviteText(r.email)}
-                        className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
-                      >
-                        Copy invite email
-                      </button>
-
-                      <a
-                        href={`mailto:${r.email}?subject=${encodeURIComponent("Freshware Portal Access")}`}
-                        className="text-center rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
-                      >
-                        Email requester
-                      </a>
-                    </div>
-                  </div>
+        ) : (
+          <>
+            <section className="rounded-3xl border bg-white p-6 shadow-sm">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div className="flex flex-wrap gap-2">
+                  <TabButton active={activeTab === "new"} onClick={() => setActiveTab("new")} label={`New (${counts.new})`} />
+                  <TabButton active={activeTab === "approved"} onClick={() => setActiveTab("approved")} label={`Approved (${counts.approved})`} />
+                  <TabButton active={activeTab === "denied"} onClick={() => setActiveTab("denied")} label={`Denied (${counts.denied})`} />
+                  <TabButton active={activeTab === "all"} onClick={() => setActiveTab("all")} label={`All (${counts.all})`} />
                 </div>
-              ))
-            )}
-          </div>
-        </section>
 
-        <section className="mt-6 rounded-3xl border bg-white p-6 shadow-sm">
-          <div className="text-sm font-semibold text-gray-900">Approval process</div>
-          <div className="mt-2 text-sm text-gray-600">
-            This page manages request status. To grant access, create the user in Supabase Auth and ensure a matching
-            profile exists with the correct role and account_id.
-          </div>
+                <div className="w-full lg:w-[360px]">
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search name, email, company, reason"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10"
+                  />
+                </div>
+              </div>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-            <ProcessCard
-              title="1) Create Auth user"
-              body="Supabase → Authentication → Users → Add user (email)."
-            />
-            <ProcessCard
-              title="2) Create profile"
-              body="Insert profiles row with role and account_id so RLS works."
-            />
-            <ProcessCard
-              title="3) Send access info"
-              body="Share the login URL and password reset instructions."
-            />
-          </div>
-        </section>
+              <div className="mt-6 grid grid-cols-1 gap-3">
+                {filtered.length === 0 ? (
+                  <div className="rounded-2xl border bg-gray-50 p-6 text-sm text-gray-600">
+                    No requests found for this view.
+                  </div>
+                ) : (
+                  filtered.map((r) => (
+                    <div key={r.id} className="rounded-3xl border bg-white p-5">
+                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-base font-semibold text-gray-900">{r.full_name}</div>
+                            <StatusPill status={normalizeStatus(r.status)} />
+                          </div>
+
+                          <div className="mt-1 text-sm text-gray-700 break-all">{r.email}</div>
+
+                          <div className="mt-2 text-sm text-gray-600">
+                            <span className="font-semibold text-gray-900">Requested:</span>{" "}
+                            {formatDateTime(r.created_at)}
+                            {r.company ? (
+                              <>
+                                {" "}
+                                <span className="text-gray-400">•</span>{" "}
+                                <span className="font-semibold text-gray-900">Company:</span> {r.company}
+                              </>
+                            ) : null}
+                          </div>
+
+                          {r.reason ? (
+                            <div className="mt-3 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
+                              <div className="text-xs font-semibold text-gray-700">Reason</div>
+                              <div className="mt-1">{r.reason}</div>
+                            </div>
+                          ) : null}
+
+                          {normalizeStatus(r.status) !== "new" ? (
+                            <div className="mt-3 text-xs text-gray-500">
+                              Reviewed at {r.reviewed_at ? formatDateTime(r.reviewed_at) : "unknown"}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="flex flex-col gap-2 w-full md:w-[220px]">
+                          {normalizeStatus(r.status) === "new" ? (
+                            <>
+                              <button
+                                onClick={() => setStatus(r.id, "approved")}
+                                disabled={workingId === r.id}
+                                className="rounded-2xl px-4 py-2 text-sm font-semibold bg-black text-white hover:opacity-90 disabled:opacity-50"
+                              >
+                                {workingId === r.id ? "Working..." : "Approve"}
+                              </button>
+                              <button
+                                onClick={() => setStatus(r.id, "denied")}
+                                disabled={workingId === r.id}
+                                className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                              >
+                                {workingId === r.id ? "Working..." : "Deny"}
+                              </button>
+                            </>
+                          ) : (
+                            <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
+                              <div className="text-xs font-semibold text-gray-700">Next step</div>
+                              <div className="mt-1">
+                                {normalizeStatus(r.status) === "approved"
+                                  ? "Create the Auth user and profile, then send the invite message."
+                                  : "No further action required."}
+                              </div>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={() => copyInviteText(r.email)}
+                            className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+                          >
+                            Copy invite email
+                          </button>
+
+                          <a
+                            href={`mailto:${r.email}?subject=${encodeURIComponent("Freshware Portal Access")}`}
+                            className="text-center rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+                          >
+                            Email requester
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="mt-6 rounded-3xl border bg-white p-6 shadow-sm">
+              <div className="text-sm font-semibold text-gray-900">Approval process</div>
+              <div className="mt-2 text-sm text-gray-600">
+                This page manages request status. To grant access, create the user in Supabase Auth and ensure a matching
+                profile exists with the correct role and account_id.
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                <ProcessCard title="1) Create Auth user" body="Supabase → Authentication → Users → Add user (email)." />
+                <ProcessCard title="2) Create profile" body="Insert profiles row with role and account_id so RLS works." />
+                <ProcessCard title="3) Send access info" body="Share the login URL and password reset instructions." />
+              </div>
+            </section>
+          </>
+        )}
       </main>
     </div>
   );

@@ -139,7 +139,6 @@ export default function AdminHomePage() {
               body="Review invite-only requests and approve or deny access."
               href="/admin/access-requests"
             />
-
             <AdminTile
               title="Users and Roles"
               body="Coming next: manage users, roles, and account assignments."
