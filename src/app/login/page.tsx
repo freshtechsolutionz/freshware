@@ -1,68 +1,21 @@
 "use client";
 
-import { useState } from "react";
-import { supabaseBrowser } from "@/lib/supabase/browser";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default function LoginPage() {
-  const supabase = supabaseBrowser();
+export default function LoginRedirectPage() {
+  const router = useRouter();
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [msg, setMsg] = useState("");
-
-  async function handleLogin() {
-    setMsg("Logging in...");
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      setMsg(error.message);
-      return;
-    }
-
-setMsg("Logged in! Redirecting...");
-
-const nextParam = new URLSearchParams(window.location.search).get("next");
-
-// prevent loops like next=/login or blank
-const safeNext =
-  nextParam && nextParam.startsWith("/") && !nextParam.startsWith("/login")
-    ? nextParam
-    : "/dashboard";
-
-window.location.assign(safeNext);
-
-
-
-  }
+  useEffect(() => {
+    router.replace("/");
+  }, [router]);
 
   return (
-    <main style={{ padding: 24, fontFamily: "Arial", maxWidth: 420 }}>
-      <h2>Log in</h2>
-
-      <label>Email</label>
-      <input
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        style={{ width: "100%", padding: 8, marginBottom: 12 }}
-      />
-
-      <label>Password</label>
-      <input
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        style={{ width: "100%", padding: 8, marginBottom: 12 }}
-      />
-
-      <button onClick={handleLogin} style={{ padding: 10, width: "100%" }}>
-        Log in
-      </button>
-
-      <p style={{ marginTop: 12 }}>{msg}</p>
-    </main>
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white flex items-center justify-center p-6">
+      <div className="w-full max-w-md rounded-3xl border bg-white p-6 shadow-sm">
+        <div className="text-lg font-semibold text-gray-900">Redirecting...</div>
+        <div className="mt-2 text-sm text-gray-600">Sending you to the portal login.</div>
+      </div>
+    </div>
   );
 }

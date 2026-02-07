@@ -227,7 +227,7 @@ export default function OpportunitiesTable({
                     <Td>{fmtDate(o.created_at)}</Td>
                     <Td>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <Link href={`/opportunities/${o.id}`}>View / Edit</Link>
+                        <Link href={`/dashboard/opportunities/${o.id}`}>View / Edit</Link>
                       </div>
                     </Td>
                   </tr>
@@ -244,7 +244,7 @@ export default function OpportunitiesTable({
                       </div>
                       {canCreate && (
                         <div style={{ marginTop: 10 }}>
-                          <Link href="/opportunities/new">+ New Opportunity</Link>
+                          <Link href="/dashboard/opportunities/new">+ New Opportunity</Link>
                         </div>
                       )}
                     </div>
@@ -258,7 +258,7 @@ export default function OpportunitiesTable({
 
       {canCreate && (
         <div style={{ marginTop: 12 }}>
-          <Link href="/opportunities/new">+ Create opportunity</Link>
+          <Link href="/dashboard/opportunities/new">+ Create opportunity</Link>
         </div>
       )}
     </div>
