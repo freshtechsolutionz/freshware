@@ -2,11 +2,10 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  SALES_STAGES,
-  SERVICE_LINES,
-  formatServiceLine,
-} from "@/lib/salesConfig";
+import TableToolbar from "@/components/dashboard/TableToolbar";
+import EmptyState from "@/components/dashboard/EmptyState";
+import { DataTableShell, Th, Td } from "@/components/dashboard/DataTableShell";
+import { SALES_STAGES, SERVICE_LINES, formatServiceLine } from "@/lib/salesConfig";
 
 type Opportunity = {
   id: string;
@@ -76,18 +75,14 @@ export default function OpportunitiesTable({
 
       const name = (o.name || "").toLowerCase();
       const accountName = o.account_id
-        ? (accountsMap[o.account_id]?.name || "")
+        ? (accountsMap[o.account_id]?.name || "").toLowerCase()
         : "";
       const contactName = o.contact_id
-        ? (contactsMap[o.contact_id]?.name || "")
+        ? (contactsMap[o.contact_id]?.name || "").toLowerCase()
         : "";
 
       const searchOk =
-        q.length === 0
-          ? true
-          : name.includes(q) ||
-            accountName.toLowerCase().includes(q) ||
-            contactName.toLowerCase().includes(q);
+        !q || name.includes(q) || accountName.includes(q) || contactName.includes(q);
 
       return stageOk && serviceOk && searchOk;
     });
@@ -95,221 +90,146 @@ export default function OpportunitiesTable({
 
   return (
     <div>
-      {/* Filters */}
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 12,
-        }}
-      >
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by opp/account/contact…"
-            style={{
-              padding: 10,
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              minWidth: 260,
-            }}
-          />
+      <TableToolbar
+        left={
+          <>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by opp/account/contact…"
+              className="min-w-[260px] rounded-lg border px-3 py-2 text-sm"
+            />
 
-          <select
-            value={stageFilter}
-            onChange={(e) => setStageFilter(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-          >
-            <option value="all">All stages</option>
-            {SALES_STAGES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+            <select
+              value={stageFilter}
+              onChange={(e) => setStageFilter(e.target.value)}
+              className="rounded-lg border px-3 py-2 text-sm"
+            >
+              <option value="all">All stages</option>
+              {SALES_STAGES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
 
-          <select
-            value={serviceFilter}
-            onChange={(e) => setServiceFilter(e.target.value)}
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-          >
-            <option value="all">All service lines</option>
-            {SERVICE_LINES.map((s) => (
-              <option key={s} value={s}>
-                {formatServiceLine(s)}
-              </option>
-            ))}
-          </select>
+            <select
+              value={serviceFilter}
+              onChange={(e) => setServiceFilter(e.target.value)}
+              className="rounded-lg border px-3 py-2 text-sm"
+            >
+              <option value="all">All service lines</option>
+              {SERVICE_LINES.map((s) => (
+                <option key={s} value={s}>
+                  {formatServiceLine(s)}
+                </option>
+              ))}
+            </select>
 
-          <button
-            onClick={() => {
-              setSearch("");
-              setStageFilter("all");
-              setServiceFilter("all");
-            }}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            Reset
-          </button>
-        </div>
+            <button
+              onClick={() => {
+                setSearch("");
+                setStageFilter("all");
+                setServiceFilter("all");
+              }}
+              className="rounded-lg border bg-background px-3 py-2 text-sm"
+              type="button"
+            >
+              Reset
+            </button>
 
-        <div style={{ opacity: 0.7, fontSize: 13 }}>
-          Showing <b>{rows.length}</b> of <b>{opportunities.length}</b>
-        </div>
-      </div>
+            {canCreate && (
+              <Link
+                href="/dashboard/opportunities/new"
+                className="rounded-lg border bg-background px-3 py-2 text-sm font-medium"
+              >
+                + New Opportunity
+              </Link>
+            )}
+          </>
+        }
+        right={
+          <div className="text-sm text-muted-foreground">
+            Showing <span className="font-medium">{rows.length}</span> of{" "}
+            <span className="font-medium">{opportunities.length}</span>
+          </div>
+        }
+      />
 
-      {/* Table */}
-      <div
-        style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 14,
-          overflow: "hidden",
-          background: "#fff",
-          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-        }}
-      >
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-            <thead>
-              <tr style={{ background: "#fafafa" }}>
-                <Th>Opportunity</Th>
-                <Th>Account</Th>
-                <Th>Stage</Th>
-                <Th>Service</Th>
-                <Th align="right">Amount</Th>
-                <Th align="right">Prob%</Th>
-                <Th>Close</Th>
-                <Th>Created</Th>
-                <Th>Actions</Th>
-              </tr>
-            </thead>
+      <DataTableShell>
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-muted/30">
+              <Th>Opportunity</Th>
+              <Th>Account</Th>
+              <Th>Stage</Th>
+              <Th>Service</Th>
+              <Th>Amount</Th>
+              <Th>Prob%</Th>
+              <Th>Close</Th>
+              <Th>Created</Th>
+              <Th>Actions</Th>
+            </tr>
+          </thead>
 
-            <tbody>
-              {rows.map((o) => {
-                const accountName = o.account_id
-                  ? accountsMap[o.account_id]?.name || "—"
-                  : "—";
+          <tbody>
+            {rows.map((o) => {
+              const accountName = o.account_id
+                ? accountsMap[o.account_id]?.name || "—"
+                : "—";
 
-                return (
-                  <tr key={o.id} style={{ borderTop: "1px solid #eee" }}>
-                    <Td>
-                      <div style={{ fontWeight: 700 }}>{o.name || "(No name)"}</div>
-                      <div style={{ fontSize: 12, opacity: 0.65 }}>{o.id}</div>
-                    </Td>
-                    <Td>{accountName}</Td>
-                    <Td>
-                      <span
-                        style={{
-                          padding: "4px 8px",
-                          borderRadius: 999,
-                          border: "1px solid #ddd",
-                          background: "#fff",
-                          fontSize: 12,
-                        }}
-                      >
-                        {safeStage(o.stage)}
-                      </span>
-                    </Td>
-                    <Td>{formatServiceLine(o.service_line || "") || "—"}</Td>
-                    <Td align="right">{fmtMoney(o.amount)}</Td>
-                    <Td align="right">{o.probability ?? 0}</Td>
-                    <Td>{fmtDate(o.close_date)}</Td>
-                    <Td>{fmtDate(o.created_at)}</Td>
-                    <Td>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <Link href={`/dashboard/opportunities/${o.id}`}>View / Edit</Link>
-                      </div>
-                    </Td>
-                  </tr>
-                );
-              })}
+              return (
+                <tr key={o.id} className="border-t">
+                  <Td>
+                    <div className="font-semibold">{o.name || "(No name)"}</div>
+                    <div className="text-xs text-muted-foreground">{o.id}</div>
+                  </Td>
 
-              {rows.length === 0 && (
-                <tr>
-                  <Td colSpan={9}>
-                    <div style={{ padding: 18 }}>
-                      <div style={{ fontWeight: 800 }}>No opportunities found</div>
-                      <div style={{ opacity: 0.7, marginTop: 6 }}>
-                        Try clearing filters or create a new opportunity.
-                      </div>
-                      {canCreate && (
-                        <div style={{ marginTop: 10 }}>
-                          <Link href="/dashboard/opportunities/new">+ New Opportunity</Link>
-                        </div>
-                      )}
-                    </div>
+                  <Td>{accountName}</Td>
+
+                  <Td>
+                    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs">
+                      {safeStage(o.stage)}
+                    </span>
+                  </Td>
+
+                  <Td>{formatServiceLine(o.service_line || "") || "—"}</Td>
+
+                  <Td>{fmtMoney(o.amount)}</Td>
+
+                  <Td>{o.probability ?? 0}</Td>
+
+                  <Td>{fmtDate(o.close_date)}</Td>
+
+                  <Td>{fmtDate(o.created_at)}</Td>
+
+                  <Td>
+                    <Link
+                      href={`/dashboard/opportunities/${o.id}`}
+                      className="underline"
+                    >
+                      View / Edit
+                    </Link>
                   </Td>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              );
+            })}
 
-      {canCreate && (
-        <div style={{ marginTop: 12 }}>
-          <Link href="/dashboard/opportunities/new">+ Create opportunity</Link>
-        </div>
-      )}
+            {rows.length === 0 && (
+              <tr>
+                <Td colSpan={9}>
+                  <EmptyState
+                    title="No opportunities found"
+                    description="Try clearing filters or create a new opportunity."
+                    actionHref={canCreate ? "/dashboard/opportunities/new" : undefined}
+                    actionLabel={canCreate ? "+ Create opportunity" : undefined}
+                  />
+                </Td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </DataTableShell>
     </div>
-  );
-}
-
-function Th({
-  children,
-  align,
-}: {
-  children: any;
-  align?: "left" | "right" | "center";
-}) {
-  return (
-    <th
-      style={{
-        textAlign: align || "left",
-        padding: 12,
-        borderBottom: "1px solid #eee",
-        fontSize: 12,
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-        opacity: 0.7,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-  colSpan,
-}: {
-  children: any;
-  align?: "left" | "right" | "center";
-  colSpan?: number;
-}) {
-  return (
-    <td
-      colSpan={colSpan}
-      style={{
-        textAlign: align || "left",
-        padding: 12,
-        verticalAlign: "top",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </td>
   );
 }
