@@ -1,8 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-export async function proxy(request: NextRequest) {
-  let response = NextResponse.next();
+export async function middleware(request: NextRequest) {
+  // Create a response we can attach cookies to
+  let response = NextResponse.next({
+    request: {
+      headers: request.headers,
+    },
+  });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -21,25 +26,13 @@ export async function proxy(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
-
-  if (pathname.startsWith("/dashboard") && !user) {
-    const portalUrl = request.nextUrl.clone();
-    portalUrl.pathname = "/portal";
-    portalUrl.searchParams.set(
-      "next",
-      pathname + (request.nextUrl.search || "")
-    );
-    return NextResponse.redirect(portalUrl);
-  }
+  // IMPORTANT: this refreshes the session if needed
+  await supabase.auth.getUser();
 
   return response;
 }
 
+// Run middleware only where you need auth/session refresh
 export const config = {
-  matcher: ["/dashboard/:path*"],
+  matcher: ["/dashboard/:path*", "/admin/:path*", "/portal/:path*"],
 };
