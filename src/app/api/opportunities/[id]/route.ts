@@ -1,54 +1,67 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-// Server-only Supabase client (Service Role)
-const supabase = createClient(supabaseUrl, serviceRoleKey);
+import { requireViewer } from "@/lib/supabase/route";
 
 export async function PATCH(
   req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const { id } = await context.params;
-    const body = await req.json();
-
-    const { name, stage, serviceLine, amount } = body;
-
-    // Basic validation
-    if (!id) {
-      return NextResponse.json({ error: "Missing id" }, { status: 400 });
-    }
-    if (!name || !stage || !serviceLine) {
-      return NextResponse.json(
-        { error: "Missing required fields: name, stage, serviceLine" },
-        { status: 400 }
-      );
-    }
-
-    const { data, error } = await supabase
-      .from("opportunities")
-      .update({
-        name,
-        stage,
-        service_line: serviceLine,
-        amount: typeof amount === "number" ? amount : Number(amount) || 0,
-      })
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ opportunity: data }, { status: 200 });
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message || "Server error" },
-      { status: 500 }
-    );
+  const { supabase, user, profile } = await requireViewer();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!profile || profile.role === "PENDING") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  const { id } = await context.params;
+  const body = await req.json().catch(() => ({}));
+
+  const update: any = {};
+
+  if ("name" in body) update.name = body.name ? String(body.name).trim() : null;
+  if ("stage" in body) update.stage = body.stage ? String(body.stage).trim() : null;
+
+  if ("serviceLine" in body) update.service_line = body.serviceLine ? String(body.serviceLine).trim() : null;
+  if ("service_line" in body) update.service_line = body.service_line ? String(body.service_line).trim() : null;
+
+  if ("amount" in body) update.amount = typeof body.amount === "number" ? body.amount : Number(body.amount) || 0;
+  if ("probability" in body) update.probability = body.probability == null ? null : Number(body.probability) || 0;
+
+  if ("close_date" in body) update.close_date = body.close_date ? new Date(body.close_date).toISOString() : null;
+  if ("closeDate" in body) update.close_date = body.closeDate ? new Date(body.closeDate).toISOString() : null;
+
+  if ("contact_id" in body) update.contact_id = body.contact_id ? String(body.contact_id) : null;
+
+  const isAdmin = profile.role === "CEO" || profile.role === "ADMIN";
+  if (isAdmin && "account_id" in body) update.account_id = body.account_id || null;
+
+  // keep owner as last editor (optional)
+  update.owner_user_id = user.id;
+
+  const { data, error } = await supabase
+    .from("opportunities")
+    .update(update)
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ opportunity: data }, { status: 200 });
+}
+
+export async function DELETE(
+  _req: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { supabase, user, profile } = await requireViewer();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!profile || profile.role === "PENDING") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { id } = await context.params;
+
+  const { error } = await supabase.from("opportunities").delete().eq("id", id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true }, { status: 200 });
 }

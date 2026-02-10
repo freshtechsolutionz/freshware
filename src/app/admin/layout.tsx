@@ -21,7 +21,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </>
       }
     >
-      <div className="pt-6">{children}</div>
+      <div className="mx-auto w-full max-w-7xl px-6 py-8">{children}</div>
     </PageShell>
   );
 }

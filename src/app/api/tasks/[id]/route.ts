@@ -15,34 +15,30 @@ export async function PATCH(
   const body = await req.json().catch(() => ({}));
 
   const update: any = {};
-
-  if ("contact_name" in body)
-    update.contact_name = body.contact_name ? String(body.contact_name).trim() : null;
-  if ("contact_email" in body)
-    update.contact_email = body.contact_email ? String(body.contact_email).trim() : null;
-  if ("scheduled_at" in body)
-    update.scheduled_at = body.scheduled_at ? new Date(body.scheduled_at).toISOString() : null;
+  if ("title" in body) update.title = body.title ? String(body.title).trim() : null;
+  if ("description" in body)
+    update.description = body.description ? String(body.description).trim() : null;
   if ("status" in body) update.status = body.status ? String(body.status).trim() : null;
-  if ("source" in body) update.source = body.source ? String(body.source).trim() : null;
-  if ("external_id" in body)
-    update.external_id = body.external_id ? String(body.external_id) : null;
+  if ("due_at" in body)
+    update.due_at = body.due_at ? new Date(body.due_at).toISOString() : null;
   if ("opportunity_id" in body)
     update.opportunity_id = body.opportunity_id ? String(body.opportunity_id) : null;
+  if ("assigned_to" in body)
+    update.assigned_to = body.assigned_to ? String(body.assigned_to) : null;
 
-  // Only CEO/ADMIN can change account_id
   const isAdmin = profile.role === "CEO" || profile.role === "ADMIN";
   if (isAdmin && "account_id" in body) update.account_id = body.account_id || null;
 
   const { data, error } = await supabase
-    .from("meetings")
+    .from("tasks")
     .update(update)
-    .eq("id", id)
+    .eq("task_id", id)
     .select()
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ meeting: data }, { status: 200 });
+  return NextResponse.json({ task: data }, { status: 200 });
 }
 
 export async function DELETE(
@@ -57,7 +53,7 @@ export async function DELETE(
 
   const { id } = await context.params;
 
-  const { error } = await supabase.from("meetings").delete().eq("id", id);
+  const { error } = await supabase.from("tasks").delete().eq("task_id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true }, { status: 200 });

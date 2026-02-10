@@ -1,70 +1,51 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { requireViewer } from "@/lib/supabase/route";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-const supabase = createClient(supabaseUrl, serviceRoleKey);
-
-export async function PATCH(
-  req: Request,
-  context: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await context.params;
-    const body = await req.json();
-
-    const { name, industry } = body;
-
-    if (!id) {
-      return NextResponse.json({ error: "Missing id" }, { status: 400 });
-    }
-    if (!name) {
-      return NextResponse.json(
-        { error: "Missing required field: name" },
-        { status: 400 }
-      );
-    }
-
-    const { data, error } = await supabase
-      .from("accounts")
-      .update({ name, industry: industry || null })
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-    return NextResponse.json({ account: data }, { status: 200 });
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message || "Server error" },
-      { status: 500 }
-    );
+export async function GET() {
+  const { supabase, user, profile } = await requireViewer();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!profile || profile.role === "PENDING") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  // RLS will scope for non-admin automatically
+  const { data, error } = await supabase
+    .from("accounts")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ accounts: data || [] }, { status: 200 });
 }
 
-export async function DELETE(
-  _req: Request,
-  context: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await context.params;
-
-    if (!id) {
-      return NextResponse.json({ error: "Missing id" }, { status: 400 });
-    }
-
-    // NOTE: If your DB has FK constraints (contacts/opps referencing accounts),
-    // this may fail until those are reassigned or deleted.
-    const { error } = await supabase.from("accounts").delete().eq("id", id);
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-    return NextResponse.json({ ok: true }, { status: 200 });
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: err?.message || "Server error" },
-      { status: 500 }
-    );
+export async function POST(req: Request) {
+  const { supabase, user, profile } = await requireViewer();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!profile || profile.role === "PENDING") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  const isAdmin = profile.role === "CEO" || profile.role === "ADMIN";
+  if (!isAdmin) {
+    return NextResponse.json({ error: "Only CEO/ADMIN can create accounts." }, { status: 403 });
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const name = (body?.name || "").toString().trim();
+  const industry = body?.industry ? String(body.industry).trim() : null;
+
+  if (!name) {
+    return NextResponse.json({ error: "Missing required field: name" }, { status: 400 });
+  }
+
+  const { data, error } = await supabase
+    .from("accounts")
+    .insert([{ name, industry }])
+    .select()
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ account: data }, { status: 200 });
 }

@@ -46,7 +46,9 @@ function normalizeStatus(s: string) {
 }
 
 function isValidUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v.trim());
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v.trim()
+  );
 }
 
 type BaseRole = "CLIENT_USER" | "CLIENT_ADMIN" | "STAFF";
@@ -61,7 +63,9 @@ export default function AdminAccessRequestsPage() {
   const [rows, setRows] = useState<AccessRequest[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<"new" | "approved" | "denied" | "all">("new");
+  const [activeTab, setActiveTab] = useState<
+    "new" | "approved" | "denied" | "all"
+  >("new");
   const [query, setQuery] = useState("");
 
   const [workingId, setWorkingId] = useState<string | null>(null);
@@ -76,7 +80,8 @@ export default function AdminAccessRequestsPage() {
   // If baseRole === STAFF, pick department role (defaults to STAFF)
   const [deptRole, setDeptRole] = useState<DeptRole>("STAFF");
 
-  const [assignAccountId, setAssignAccountId] = useState<string>(DEFAULT_ACCOUNT_ID);
+  const [assignAccountId, setAssignAccountId] =
+    useState<string>(DEFAULT_ACCOUNT_ID);
   const [approvedNow, setApprovedNow] = useState(false);
 
   const finalRole: string = useMemo(() => {
@@ -123,7 +128,9 @@ export default function AdminAccessRequestsPage() {
 
     const { data, error } = await supabase
       .from("access_requests")
-      .select("id, created_at, full_name, email, company, reason, status, reviewed_by, reviewed_at")
+      .select(
+        "id, created_at, full_name, email, company, reason, status, reviewed_by, reviewed_at"
+      )
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -168,7 +175,8 @@ export default function AdminAccessRequestsPage() {
       const s = normalizeStatus(r.status);
       if (activeTab !== "all" && s !== activeTab) return false;
       if (!q) return true;
-      const hay = `${r.full_name} ${r.email} ${r.company ?? ""} ${r.reason ?? ""}`.toLowerCase();
+      const hay =
+        `${r.full_name} ${r.email} ${r.company ?? ""} ${r.reason ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [rows, activeTab, query]);
@@ -208,7 +216,9 @@ export default function AdminAccessRequestsPage() {
     setBaseRole("CLIENT_USER");
     setDeptRole("STAFF");
 
-    setAssignAccountId(DEFAULT_ACCOUNT_ID || "91c6d89b-ab0d-4990-939c-3abe033df8ee");
+    setAssignAccountId(
+      DEFAULT_ACCOUNT_ID || "91c6d89b-ab0d-4990-939c-3abe033df8ee"
+    );
     setPanelOpen(true);
   }
 
@@ -287,7 +297,7 @@ export default function AdminAccessRequestsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white flex items-center justify-center p-6">
+      <div className="flex items-center justify-center">
         <div className="w-full max-w-2xl rounded-3xl border bg-white p-6 shadow-sm">
           <div className="h-6 w-56 rounded bg-gray-200 animate-pulse" />
           <div className="mt-4 h-10 w-full rounded-2xl bg-gray-200 animate-pulse" />
@@ -302,11 +312,15 @@ export default function AdminAccessRequestsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white">
-      <header className="mx-auto max-w-6xl px-6 py-6 flex items-center justify-between">
-        <div>
-          <div className="text-xl font-semibold text-gray-900">Access Requests</div>
-          <div className="mt-1 text-sm text-gray-600">Review invite-only requests and approve or deny access.</div>
+    <div className="space-y-6">
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-xl font-semibold text-gray-900">
+            Access Requests
+          </div>
+          <div className="mt-1 text-sm text-gray-600">
+            Review invite-only requests and approve or deny access.
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <Link
@@ -315,155 +329,197 @@ export default function AdminAccessRequestsPage() {
           >
             Back to Admin
           </Link>
-          <Link
-            href="/"
-            className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
-          >
-            Portal entry
-          </Link>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 pb-16">
-        {toast && (
-          <div className="mb-4 rounded-2xl border bg-white p-3 text-sm font-semibold text-gray-900 shadow-sm">
-            {toast}
-          </div>
-        )}
+      {toast && (
+        <div className="rounded-2xl border bg-white p-3 text-sm font-semibold text-gray-900 shadow-sm">
+          {toast}
+        </div>
+      )}
 
-        {errorMsg && (
-          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {errorMsg}
-          </div>
-        )}
+      {errorMsg && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {errorMsg}
+        </div>
+      )}
 
-        {!isAdmin ? (
-          <div className="rounded-3xl border bg-white p-8 shadow-sm">
-            <div className="text-lg font-semibold text-gray-900">Not authorized</div>
-            <div className="mt-2 text-sm text-gray-600">You do not have permission to view access requests.</div>
+      {!isAdmin ? (
+        <div className="rounded-3xl border bg-white p-8 shadow-sm">
+          <div className="text-lg font-semibold text-gray-900">
+            Not authorized
           </div>
-        ) : (
-          <section className="rounded-3xl border bg-white p-6 shadow-sm">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-              <div className="flex flex-wrap gap-2">
-                <TabButton active={activeTab === "new"} onClick={() => setActiveTab("new")} label={`New (${counts.new})`} />
-                <TabButton active={activeTab === "approved"} onClick={() => setActiveTab("approved")} label={`Approved (${counts.approved})`} />
-                <TabButton active={activeTab === "denied"} onClick={() => setActiveTab("denied")} label={`Denied (${counts.denied})`} />
-                <TabButton active={activeTab === "all"} onClick={() => setActiveTab("all")} label={`All (${counts.all})`} />
-              </div>
-
-              <div className="w-full lg:w-[360px]">
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search name, email, company, reason"
-                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10"
-                />
-              </div>
+          <div className="mt-2 text-sm text-gray-600">
+            You do not have permission to view access requests.
+          </div>
+        </div>
+      ) : (
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="flex flex-wrap gap-2">
+              <TabButton
+                active={activeTab === "new"}
+                onClick={() => setActiveTab("new")}
+                label={`New (${counts.new})`}
+              />
+              <TabButton
+                active={activeTab === "approved"}
+                onClick={() => setActiveTab("approved")}
+                label={`Approved (${counts.approved})`}
+              />
+              <TabButton
+                active={activeTab === "denied"}
+                onClick={() => setActiveTab("denied")}
+                label={`Denied (${counts.denied})`}
+              />
+              <TabButton
+                active={activeTab === "all"}
+                onClick={() => setActiveTab("all")}
+                label={`All (${counts.all})`}
+              />
             </div>
 
-            <div className="mt-6 grid grid-cols-1 gap-3">
-              {filtered.length === 0 ? (
-                <div className="rounded-2xl border bg-gray-50 p-6 text-sm text-gray-600">No requests found.</div>
-              ) : (
-                filtered.map((r) => (
-                  <div key={r.id} className="rounded-3xl border bg-white p-5">
-                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="text-base font-semibold text-gray-900">{r.full_name}</div>
-                          <StatusPill status={normalizeStatus(r.status)} />
+            <div className="w-full lg:w-[360px]">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search name, email, company, reason"
+                className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10"
+              />
+            </div>
+          </div>
+
+          <div className="mt-6 grid grid-cols-1 gap-3">
+            {filtered.length === 0 ? (
+              <div className="rounded-2xl border bg-gray-50 p-6 text-sm text-gray-600">
+                No requests found.
+              </div>
+            ) : (
+              filtered.map((r) => (
+                <div key={r.id} className="rounded-3xl border bg-white p-5">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-base font-semibold text-gray-900">
+                          {r.full_name}
                         </div>
-
-                        <div className="mt-1 text-sm text-gray-700 break-all">{r.email}</div>
-
-                        <div className="mt-2 text-sm text-gray-600">
-                          <span className="font-semibold text-gray-900">Requested:</span> {formatDateTime(r.created_at)}
-                          {r.company ? (
-                            <>
-                              {" "}
-                              <span className="text-gray-400">•</span>{" "}
-                              <span className="font-semibold text-gray-900">Company:</span> {r.company}
-                            </>
-                          ) : null}
-                        </div>
-
-                        {r.reason ? (
-                          <div className="mt-3 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                            <div className="text-xs font-semibold text-gray-700">Reason</div>
-                            <div className="mt-1">{r.reason}</div>
-                          </div>
-                        ) : null}
-
-                        {normalizeStatus(r.status) !== "new" ? (
-                          <div className="mt-3 text-xs text-gray-500">
-                            Reviewed at {r.reviewed_at ? formatDateTime(r.reviewed_at) : "unknown"}
-                          </div>
-                        ) : null}
+                        <StatusPill status={normalizeStatus(r.status)} />
                       </div>
 
-                      <div className="flex flex-col gap-2 w-full md:w-[240px]">
-                        {normalizeStatus(r.status) === "new" ? (
+                      <div className="mt-1 text-sm text-gray-700 break-all">
+                        {r.email}
+                      </div>
+
+                      <div className="mt-2 text-sm text-gray-600">
+                        <span className="font-semibold text-gray-900">
+                          Requested:
+                        </span>{" "}
+                        {formatDateTime(r.created_at)}
+                        {r.company ? (
                           <>
-                            <button
-                              onClick={() => openApprovePanel(r)}
-                              disabled={workingId === r.id}
-                              className="rounded-2xl px-4 py-2 text-sm font-semibold bg-black text-white hover:opacity-90 disabled:opacity-50"
-                            >
-                              Approve (guided)
-                            </button>
-
-                            <button
-                              onClick={() => setStatus(r.id, "denied")}
-                              disabled={workingId === r.id}
-                              className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
-                            >
-                              {workingId === r.id ? "Working..." : "Deny"}
-                            </button>
+                            {" "}
+                            <span className="text-gray-400">•</span>{" "}
+                            <span className="font-semibold text-gray-900">
+                              Company:
+                            </span>{" "}
+                            {r.company}
                           </>
-                        ) : (
-                          <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                            <div className="text-xs font-semibold text-gray-700">Next step</div>
-                            <div className="mt-1">
-                              {normalizeStatus(r.status) === "approved"
-                                ? "Create Auth user + profile, then send the invite message."
-                                : "No further action required."}
-                            </div>
-                          </div>
-                        )}
-
-                        <button
-                          onClick={() => copyInviteEmail(r.email)}
-                          className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
-                        >
-                          Copy invite email
-                        </button>
-
-                        <a
-                          href={`mailto:${r.email}?subject=${encodeURIComponent("Freshware Portal Access")}`}
-                          className="text-center rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
-                        >
-                          Email requester
-                        </a>
+                        ) : null}
                       </div>
+
+                      {r.reason ? (
+                        <div className="mt-3 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
+                          <div className="text-xs font-semibold text-gray-700">
+                            Reason
+                          </div>
+                          <div className="mt-1">{r.reason}</div>
+                        </div>
+                      ) : null}
+
+                      {normalizeStatus(r.status) !== "new" ? (
+                        <div className="mt-3 text-xs text-gray-500">
+                          Reviewed at{" "}
+                          {r.reviewed_at
+                            ? formatDateTime(r.reviewed_at)
+                            : "unknown"}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-col gap-2 w-full md:w-[240px]">
+                      {normalizeStatus(r.status) === "new" ? (
+                        <>
+                          <button
+                            onClick={() => openApprovePanel(r)}
+                            disabled={workingId === r.id}
+                            className="rounded-2xl px-4 py-2 text-sm font-semibold bg-black text-white hover:opacity-90 disabled:opacity-50"
+                          >
+                            Approve (guided)
+                          </button>
+
+                          <button
+                            onClick={() => setStatus(r.id, "denied")}
+                            disabled={workingId === r.id}
+                            className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                          >
+                            {workingId === r.id ? "Working..." : "Deny"}
+                          </button>
+                        </>
+                      ) : (
+                        <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
+                          <div className="text-xs font-semibold text-gray-700">
+                            Next step
+                          </div>
+                          <div className="mt-1">
+                            {normalizeStatus(r.status) === "approved"
+                              ? "Create Auth user + profile, then send the invite message."
+                              : "No further action required."}
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => copyInviteEmail(r.email)}
+                        className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+                      >
+                        Copy invite email
+                      </button>
+
+                      <a
+                        href={`mailto:${r.email}?subject=${encodeURIComponent(
+                          "Freshware Portal Access"
+                        )}`}
+                        className="text-center rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+                      >
+                        Email requester
+                      </a>
                     </div>
                   </div>
-                ))
-              )}
-            </div>
-          </section>
-        )}
-      </main>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      )}
 
       {panelOpen && selected ? (
         <>
-          <div className="fixed inset-0 bg-black/30" onClick={closePanel} role="button" aria-label="Close" />
+          <div
+            className="fixed inset-0 bg-black/30"
+            onClick={closePanel}
+            role="button"
+            aria-label="Close"
+          />
           <aside className="fixed right-0 top-0 h-full w-full sm:w-[520px] bg-white border-l shadow-xl">
             <div className="h-full flex flex-col">
               <div className="p-6 border-b flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="text-lg font-semibold text-gray-900">Approve access</div>
-                  <div className="mt-1 text-sm text-gray-600">Choose role and account, then follow the checklist.</div>
+                  <div className="text-lg font-semibold text-gray-900">
+                    Approve access
+                  </div>
+                  <div className="mt-1 text-sm text-gray-600">
+                    Choose role and account, then follow the checklist.
+                  </div>
                 </div>
                 <button
                   onClick={closePanel}
@@ -475,8 +531,12 @@ export default function AdminAccessRequestsPage() {
 
               <div className="p-6 overflow-auto flex-1">
                 <div className="rounded-3xl border bg-gray-50 p-5">
-                  <div className="text-sm font-semibold text-gray-900">{selected.full_name}</div>
-                  <div className="mt-1 text-sm text-gray-700 break-all">{selected.email}</div>
+                  <div className="text-sm font-semibold text-gray-900">
+                    {selected.full_name}
+                  </div>
+                  <div className="mt-1 text-sm text-gray-700 break-all">
+                    {selected.email}
+                  </div>
                   <div className="mt-2 text-xs text-gray-600">
                     Requested {formatDateTime(selected.created_at)}
                     {selected.company ? ` • ${selected.company}` : ""}
@@ -484,10 +544,14 @@ export default function AdminAccessRequestsPage() {
                 </div>
 
                 <div className="mt-6 rounded-3xl border bg-white p-5">
-                  <div className="text-sm font-semibold text-gray-900">Assignments</div>
+                  <div className="text-sm font-semibold text-gray-900">
+                    Assignments
+                  </div>
 
                   <label className="block mt-4">
-                    <div className="text-sm font-semibold text-gray-900">Who is this user?</div>
+                    <div className="text-sm font-semibold text-gray-900">
+                      Who is this user?
+                    </div>
                     <select
                       value={baseRole}
                       onChange={(e) => setBaseRole(e.target.value as BaseRole)}
@@ -501,7 +565,9 @@ export default function AdminAccessRequestsPage() {
 
                   {baseRole === "STAFF" ? (
                     <label className="block mt-4">
-                      <div className="text-sm font-semibold text-gray-900">Department role</div>
+                      <div className="text-sm font-semibold text-gray-900">
+                        Department role
+                      </div>
                       <select
                         value={deptRole}
                         onChange={(e) => setDeptRole(e.target.value as DeptRole)}
@@ -514,20 +580,28 @@ export default function AdminAccessRequestsPage() {
                       </select>
 
                       <div className="mt-2 text-xs text-gray-500">
-                        Platform ADMIN is not assigned here. Approve as STAFF/OPS/SALES/MARKETING, then promote to ADMIN only if needed.
+                        Platform ADMIN is not assigned here. Approve as
+                        STAFF/OPS/SALES/MARKETING, then promote to ADMIN only if
+                        needed.
                       </div>
                     </label>
                   ) : (
                     <div className="mt-4 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                      <div className="text-xs font-semibold text-gray-700">Client roles</div>
+                      <div className="text-xs font-semibold text-gray-700">
+                        Client roles
+                      </div>
                       <div className="mt-1">
-                        CLIENT_USER is for most client team members. CLIENT_ADMIN is for the client’s main manager/owner inside their account.
+                        CLIENT_USER is for most client team members.
+                        CLIENT_ADMIN is for the client’s main manager/owner
+                        inside their account.
                       </div>
                     </div>
                   )}
 
                   <label className="block mt-4">
-                    <div className="text-sm font-semibold text-gray-900">Account ID (recommended)</div>
+                    <div className="text-sm font-semibold text-gray-900">
+                      Account ID (recommended)
+                    </div>
                     <input
                       value={assignAccountId}
                       onChange={(e) => setAssignAccountId(e.target.value)}
@@ -536,18 +610,24 @@ export default function AdminAccessRequestsPage() {
                     />
                     {!panelAccountOk ? (
                       <div className="mt-2 text-xs text-red-600">
-                        This does not look like a UUID. Either clear it or paste a valid accounts.id value.
+                        This does not look like a UUID. Either clear it or paste
+                        a valid accounts.id value.
                       </div>
                     ) : (
                       <div className="mt-2 text-xs text-gray-500">
-                        For Fresh Tech staff, this can be the Fresh Tech account. For clients, use the client’s account_id.
+                        For Fresh Tech staff, this can be the Fresh Tech
+                        account. For clients, use the client’s account_id.
                       </div>
                     )}
                   </label>
 
                   <div className="mt-4 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                    <div className="text-xs font-semibold text-gray-700">Final role that will be assigned</div>
-                    <div className="mt-1 font-semibold text-gray-900">{finalRole}</div>
+                    <div className="text-xs font-semibold text-gray-700">
+                      Final role that will be assigned
+                    </div>
+                    <div className="mt-1 font-semibold text-gray-900">
+                      {finalRole}
+                    </div>
                   </div>
 
                   <div className="mt-5 flex flex-wrap gap-2">
@@ -584,13 +664,18 @@ export default function AdminAccessRequestsPage() {
 
                   {approvedNow ? (
                     <div className="mt-4 rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-                      Request marked approved. Next: create Auth user + profile, then send the invite email.
+                      Request marked approved. Next: create Auth user + profile,
+                      then send the invite email.
                     </div>
                   ) : (
                     <div className="mt-4 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                      <div className="text-xs font-semibold text-gray-700">Next steps</div>
+                      <div className="text-xs font-semibold text-gray-700">
+                        Next steps
+                      </div>
                       <div className="mt-1">
-                        Click “Copy setup steps” for the exact checklist + SQL template, then create the Auth user and profile in Supabase.
+                        Click “Copy setup steps” for the exact checklist + SQL
+                        template, then create the Auth user and profile in
+                        Supabase.
                       </div>
                     </div>
                   )}
@@ -598,7 +683,8 @@ export default function AdminAccessRequestsPage() {
               </div>
 
               <div className="p-6 border-t text-xs text-gray-500">
-                Guided approvals reduce mistakes until we automate user creation with a secure server-side function.
+                Guided approvals reduce mistakes until we automate user creation
+                with a secure server-side function.
               </div>
             </div>
           </aside>
@@ -624,7 +710,8 @@ function TabButton(props: { active: boolean; onClick: () => void; label: string 
 }
 
 function StatusPill(props: { status: "new" | "approved" | "denied" }) {
-  const label = props.status === "new" ? "New" : props.status === "approved" ? "Approved" : "Denied";
+  const label =
+    props.status === "new" ? "New" : props.status === "approved" ? "Approved" : "Denied";
   const cls =
     props.status === "new"
       ? "bg-gray-50 text-gray-700 border-gray-200"
