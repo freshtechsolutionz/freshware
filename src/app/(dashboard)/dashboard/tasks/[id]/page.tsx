@@ -27,20 +27,41 @@ export default async function TaskEditPage({
 }) {
   const { id } = await params;
 
-  // Safety guard: never treat "new" as a UUID
-  if (id === "new") redirect("/dashboard/tasks/new");
-
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: { getAll: () => cookieStore.getAll() },
-    }
+    { cookies: { getAll: () => cookieStore.getAll() } }
   );
 
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) redirect(`/portal?next=/dashboard/tasks/${id}`);
+
+  const { data: prof } = await supabase
+    .from("profiles")
+    .select("account_id, role")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+
+  const accountId = prof?.account_id;
+  if (!accountId) {
+    return (
+      <>
+        <PageHeader
+          title="Edit Task"
+          subtitle="Update task details."
+          right={
+            <Link href="/dashboard/tasks" className="rounded-lg border px-3 py-2 text-sm">
+              Back to Tasks
+            </Link>
+          }
+        />
+        <div className="rounded-2xl border bg-background p-4 text-sm">
+          Your profile is missing an account assignment (profiles.account_id).
+        </div>
+      </>
+    );
+  }
 
   try {
     const task = await findTaskById(supabase, id);
@@ -52,10 +73,7 @@ export default async function TaskEditPage({
             title="Task not found"
             subtitle="This task may have been deleted."
             right={
-              <Link
-                href="/dashboard/tasks"
-                className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
-              >
+              <Link href="/dashboard/tasks" className="rounded-lg border px-3 py-2 text-sm">
                 Back to Tasks
               </Link>
             }
@@ -67,23 +85,31 @@ export default async function TaskEditPage({
       );
     }
 
-    return (
-      <>
-        <PageHeader
-          title="Edit Task"
-          subtitle="Update task details."
-          right={
-            <Link
-              href="/dashboard/tasks"
-              className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
-            >
-              Back to Tasks
-            </Link>
-          }
-        />
-        <EditTaskForm initial={task} />
-      </>
-    );
+    const [oppRes, usersRes] = await Promise.all([
+      supabase
+        .from("opportunities")
+        .select("id, name")
+        .eq("account_id", accountId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("profiles")
+        .select("id, full_name, role")
+        .eq("account_id", accountId)
+        .neq("role", "PENDING")
+        .order("full_name", { ascending: true }),
+    ]);
+
+    const opportunities = (oppRes.data || []).map((o: any) => ({
+      id: o.id,
+      label: o.name || o.id,
+    }));
+
+    const users = (usersRes.data || []).map((u: any) => ({
+      id: u.id,
+      label: u.full_name || u.id,
+    }));
+
+    return <EditTaskForm initial={task} opportunities={opportunities} users={users} />;
   } catch (e: any) {
     return (
       <>
@@ -91,10 +117,7 @@ export default async function TaskEditPage({
           title="Edit Task"
           subtitle="Update task details."
           right={
-            <Link
-              href="/dashboard/tasks"
-              className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
-            >
+            <Link href="/dashboard/tasks" className="rounded-lg border px-3 py-2 text-sm">
               Back to Tasks
             </Link>
           }

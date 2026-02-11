@@ -255,7 +255,17 @@ export default function AdminAccessRequestsPage() {
         }),
       });
 
-      const json = await res.json();
+      const text = await res.text();
+let json: any = null;
+
+try {
+  json = JSON.parse(text);
+} catch {
+  setWorkingId(null);
+  setErrorMsg(`Approve route returned non-JSON. First 120 chars: ${text.slice(0, 120)}`);
+  return;
+}
+
 
       if (!res.ok) {
         setWorkingId(null);

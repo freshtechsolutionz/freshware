@@ -3,6 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
+export async function GET() {
+  return NextResponse.json({ ok: true, route: "/api/admin/approve-access" });
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -24,19 +28,13 @@ export async function POST(req: Request) {
     };
 
     if (!access_request_id || !email || !full_name || !role || !account_id) {
-      return NextResponse.json(
-        { error: "Missing required fields." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
     }
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     if (!serviceKey) {
-      return NextResponse.json(
-        { error: "SUPABASE_SERVICE_ROLE_KEY not set." },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY not set." }, { status: 500 });
     }
 
     const admin = createClient(url, serviceKey);
@@ -57,41 +55,34 @@ export async function POST(req: Request) {
       });
 
       if (created.error) {
-        return NextResponse.json(
-          { error: created.error.message },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: created.error.message }, { status: 400 });
       }
 
       userId = created.data.user?.id || null;
     }
 
     if (!userId) {
-      return NextResponse.json(
-        { error: "Unable to determine auth user id." },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Unable to determine auth user id." }, { status: 500 });
     }
 
     // 2) Upsert profile
-    const upsertRes = await admin.from("profiles").upsert(
-      {
-        id: userId,
-        full_name,
-        role,
-        account_id,
-      },
-      { onConflict: "id" }
-    );
+    const upsertRes = await admin
+      .from("profiles")
+      .upsert(
+        {
+          id: userId,
+          full_name,
+          role,
+          account_id,
+        },
+        { onConflict: "id" }
+      );
 
     if (upsertRes.error) {
-      return NextResponse.json(
-        { error: upsertRes.error.message },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: upsertRes.error.message }, { status: 400 });
     }
 
-    // 3) Mark access request approved (reviewed_by should be the ADMIN who approved)
+    // 3) Mark access request approved (reviewed_by = the ADMIN who approved)
     const approveRes = await admin
       .from("access_requests")
       .update({
@@ -102,10 +93,7 @@ export async function POST(req: Request) {
       .eq("id", access_request_id);
 
     if (approveRes.error) {
-      return NextResponse.json(
-        { error: approveRes.error.message },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: approveRes.error.message }, { status: 400 });
     }
 
     return NextResponse.json({
@@ -114,9 +102,6 @@ export async function POST(req: Request) {
       reviewed_by: reviewer_id ?? null,
     });
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "Unknown error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message || "Unknown error" }, { status: 500 });
   }
 }

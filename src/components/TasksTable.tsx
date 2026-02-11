@@ -1,253 +1,538 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import TableToolbar from "@/components/dashboard/TableToolbar";
 import EmptyState from "@/components/dashboard/EmptyState";
 import { DataTableShell, Th, Td } from "@/components/dashboard/DataTableShell";
-import { supabaseBrowser } from "@/lib/supabase/browser";
 
-type TaskView = {
+type TaskStatus = "New" | "In Progress" | "Done" | "Blocked";
+
+type TaskRow = {
   task_id: string;
-  opportunity_id: string | null;
-  opportunity_name: string | null;
   title: string | null;
   description: string | null;
+  status: TaskStatus;
   due_at: string | null;
-  status: string | null;
+  opportunity_id: string | null;
   assigned_to: string | null;
-  assignee_name: string | null;
-  assignee_role: string | null;
-  created_by: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  account_id: string | null;
+  opportunity_name?: string | null;
+  assignee_name?: string | null;
 };
 
 type Props = {
   role: string;
-  tasks: TaskView[];
+  viewerId: string;
+  tasks: TaskRow[];
 };
 
-const supabase = supabaseBrowser();
+const STATUSES: TaskStatus[] = ["New", "In Progress", "Done", "Blocked"];
 
-function fmtDate(value: string | null) {
-  if (!value) return "";
-  try {
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return value;
-    return d.toLocaleDateString();
-  } catch {
-    return value;
-  }
+type Preset = {
+  name: string;
+  search: string;
+  statuses: TaskStatus[];
+  projectId: string;
+  assigneeId: string;
+  dueSoon: boolean;
+  myTasks: boolean;
+};
+
+const STORAGE_KEY = "freshware.tasks.presets.v1";
+
+function truncate(s: string, n: number) {
+  if (s.length <= n) return s;
+  return s.slice(0, n - 1) + "...";
 }
 
-function normalizeStatus(s: string | null) {
-  const v = (s || "").toLowerCase();
-  if (v === "done") return "done";
-  if (v === "in_progress") return "in_progress";
-  return "todo";
+function isDueSoon(dueIso: string | null, days = 7) {
+  if (!dueIso) return false;
+  const d = new Date(dueIso);
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  const diffMs = d.getTime() - now.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  return diffDays >= 0 && diffDays <= days;
 }
 
-function statusLabel(s: string | null) {
-  const v = normalizeStatus(s);
-  if (v === "done") return "Done";
-  if (v === "in_progress") return "In progress";
-  return "To do";
-}
+export default function TasksTable({ role, viewerId, tasks }: Props) {
+  const roleUpper = (role || "").toUpperCase();
+  const canCreate = ["CEO", "ADMIN", "SALES"].includes(roleUpper);
+  const canUpdateStatus = ["CEO", "ADMIN", "SALES", "OPS", "STAFF"].includes(roleUpper);
 
-export default function TasksTable({ role, tasks }: Props) {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"" | "todo" | "in_progress" | "done">("");
-  const [assigneeFilter, setAssigneeFilter] = useState<string>("");
 
-  const canCreate = ["CEO", "ADMIN", "SALES", "OPS"].includes((role || "").toUpperCase());
+  // Default view: New + In Progress
+  const [statuses, setStatuses] = useState<TaskStatus[]>(["New", "In Progress"]);
+  const [projectId, setProjectId] = useState("");
+  const [assigneeId, setAssigneeId] = useState("");
+  const [dueSoon, setDueSoon] = useState(false);
+  const [myTasks, setMyTasks] = useState(false);
+
+  const [savingPreset, setSavingPreset] = useState(false);
+  const [presetName, setPresetName] = useState("");
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const [statusWorking, setStatusWorking] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as Preset[]) : [];
+      if (Array.isArray(parsed)) setPresets(parsed);
+    } catch {
+      setPresets([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 1800);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const projectOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of tasks || []) {
+      if (!t.opportunity_id) continue;
+      map.set(t.opportunity_id, t.opportunity_name || t.opportunity_id);
+    }
+    return Array.from(map.entries())
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [tasks]);
 
   const assigneeOptions = useMemo(() => {
     const map = new Map<string, string>();
     for (const t of tasks || []) {
-      if (t.assigned_to) {
-        const label = t.assignee_name
-          ? `${t.assignee_name}${t.assignee_role ? ` (${t.assignee_role})` : ""}`
-          : t.assigned_to;
-        map.set(t.assigned_to, label);
-      }
+      if (!t.assigned_to) continue;
+      map.set(t.assigned_to, t.assignee_name || t.assigned_to);
     }
-    return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+    return Array.from(map.entries())
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
   }, [tasks]);
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
 
     return (tasks || []).filter((t) => {
-      const st = normalizeStatus(t.status);
+      if (statuses.length && !statuses.includes(t.status)) return false;
+      if (projectId && (t.opportunity_id || "") !== projectId) return false;
 
-      if (statusFilter && st !== statusFilter) return false;
-      if (assigneeFilter && (t.assigned_to || "") !== assigneeFilter) return false;
+      const effectiveAssignee = myTasks ? viewerId : assigneeId;
+      if (effectiveAssignee && (t.assigned_to || "") !== effectiveAssignee) return false;
+
+      if (dueSoon) {
+        if (t.status === "Done") return false;
+        if (!isDueSoon(t.due_at, 7)) return false;
+      }
 
       if (!q) return true;
-
-      const title = (t.title || "").toLowerCase();
-      const desc = (t.description || "").toLowerCase();
-      const proj = (t.opportunity_name || t.opportunity_id || "").toLowerCase();
-      const who = (t.assignee_name || t.assigned_to || "").toLowerCase();
-      const id = (t.task_id || "").toLowerCase();
-
-      return title.includes(q) || desc.includes(q) || proj.includes(q) || who.includes(q) || id.includes(q);
+      const hay = `${t.title ?? ""} ${t.description ?? ""} ${t.opportunity_name ?? ""} ${t.assignee_name ?? ""}`.toLowerCase();
+      return hay.includes(q);
     });
-  }, [tasks, search, statusFilter, assigneeFilter]);
+  }, [tasks, search, statuses, projectId, assigneeId, dueSoon, myTasks, viewerId]);
 
-  async function markDone(taskId: string) {
-    const { error } = await supabase
-      .from("tasks")
-      .update({ status: "done", updated_at: new Date().toISOString() })
-      .eq("task_id", taskId);
+  function applyPreset(p: Preset) {
+    setSearch(p.search);
+    setStatuses(p.statuses);
+    setProjectId(p.projectId);
+    setAssigneeId(p.assigneeId);
+    setDueSoon(p.dueSoon);
+    setMyTasks(p.myTasks);
+    setToast(`Loaded preset: ${p.name}`);
+  }
 
-    if (error) {
-      alert(error.message);
+  function resetToDefault() {
+    setSearch("");
+    setStatuses(["New", "In Progress"]);
+    setProjectId("");
+    setAssigneeId("");
+    setDueSoon(false);
+    setMyTasks(false);
+  }
+
+  function setQuickPreset(kind: "open" | "mine" | "due" | "all") {
+    setSearch("");
+    setProjectId("");
+    setAssigneeId("");
+    setPresetName("");
+
+    if (kind === "open") {
+      setStatuses(["New", "In Progress"]);
+      setDueSoon(false);
+      setMyTasks(false);
       return;
     }
 
-    window.location.reload();
+    if (kind === "mine") {
+      setStatuses(["New", "In Progress", "Blocked", "Done"]);
+      setDueSoon(false);
+      setMyTasks(true);
+      return;
+    }
+
+    if (kind === "due") {
+      setStatuses(["New", "In Progress", "Blocked"]);
+      setDueSoon(true);
+      setMyTasks(false);
+      return;
+    }
+
+    // all
+    setStatuses(["New", "In Progress", "Done", "Blocked"]);
+    setDueSoon(false);
+    setMyTasks(false);
+  }
+
+  function toggleStatus(s: TaskStatus) {
+    setStatuses((prev) => {
+      if (prev.includes(s)) return prev.filter((x) => x !== s);
+      return [...prev, s];
+    });
+  }
+
+  function saveCurrentPreset() {
+    const name = presetName.trim();
+    if (!name) {
+      setToast("Enter a preset name");
+      return;
+    }
+
+    const p: Preset = {
+      name,
+      search,
+      statuses,
+      projectId,
+      assigneeId,
+      dueSoon,
+      myTasks,
+    };
+
+    setSavingPreset(true);
+    try {
+      const next = [...presets.filter((x) => x.name !== name), p].sort((a, b) => a.name.localeCompare(b.name));
+      setPresets(next);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setPresetName("");
+      setToast("Preset saved");
+    } catch {
+      setToast("Could not save preset");
+    } finally {
+      setSavingPreset(false);
+    }
+  }
+
+  function deletePreset(name: string) {
+    const next = presets.filter((p) => p.name !== name);
+    setPresets(next);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    setToast("Preset deleted");
+  }
+
+  async function updateTaskStatus(taskId: string, next: TaskStatus) {
+    if (!canUpdateStatus) return;
+
+    setStatusWorking(taskId);
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: next }),
+      });
+
+      const text = await res.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        setToast("Status update failed (non-JSON response)");
+        setStatusWorking(null);
+        return;
+      }
+
+      if (!res.ok) {
+        setToast(json?.error || "Status update failed");
+        setStatusWorking(null);
+        return;
+      }
+
+      // Refresh page data
+      window.location.reload();
+    } catch {
+      setToast("Status update failed");
+    } finally {
+      setStatusWorking(null);
+    }
   }
 
   return (
     <div>
+      {toast ? (
+        <div className="mb-3 rounded-lg border bg-background px-3 py-2 text-sm">{toast}</div>
+      ) : null}
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button onClick={() => setQuickPreset("open")} className="rounded-lg border px-3 py-2 text-sm">
+          Open
+        </button>
+        <button onClick={() => setQuickPreset("mine")} className="rounded-lg border px-3 py-2 text-sm">
+          My Tasks
+        </button>
+        <button onClick={() => setQuickPreset("due")} className="rounded-lg border px-3 py-2 text-sm">
+          Due Soon
+        </button>
+        <button onClick={() => setQuickPreset("all")} className="rounded-lg border px-3 py-2 text-sm">
+          All
+        </button>
+
+        <div className="w-px self-stretch bg-border mx-1" />
+
+        <select
+          defaultValue=""
+          onChange={(e) => {
+            const name = e.target.value;
+            if (!name) return;
+            const p = presets.find((x) => x.name === name);
+            if (p) applyPreset(p);
+            e.currentTarget.value = "";
+          }}
+          className="rounded-lg border px-3 py-2 text-sm"
+        >
+          <option value="">Load preset...</option>
+          {presets.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <TableToolbar
         left={
-          <>
+          <div className="flex flex-wrap items-center gap-2">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search title, description, project, assignee..."
-              className="min-w-[280px] rounded-lg border px-3 py-2 text-sm"
+              placeholder="Search tasks..."
+              className="min-w-[220px] rounded-lg border px-3 py-2 text-sm"
             />
 
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="rounded-lg border px-3 py-2 text-sm bg-background"
-            >
-              <option value="">All statuses</option>
-              <option value="todo">To do</option>
-              <option value="in_progress">In progress</option>
-              <option value="done">Done</option>
-            </select>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
+              <span className="text-xs font-semibold">Status</span>
+              {STATUSES.map((s) => (
+                <label key={s} className="flex items-center gap-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={statuses.includes(s)}
+                    onChange={() => toggleStatus(s)}
+                  />
+                  <span>{s}</span>
+                </label>
+              ))}
+            </div>
 
             <select
-              value={assigneeFilter}
-              onChange={(e) => setAssigneeFilter(e.target.value)}
-              className="rounded-lg border px-3 py-2 text-sm bg-background"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="rounded-lg border px-3 py-2 text-sm max-w-[240px]"
             >
-              <option value="">All assignees</option>
-              {assigneeOptions.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
+              <option value="">All projects</option>
+              {projectOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
                 </option>
               ))}
             </select>
 
-            <button
-              onClick={() => {
-                setSearch("");
-                setStatusFilter("");
-                setAssigneeFilter("");
-              }}
-              className="rounded-lg border bg-background px-3 py-2 text-sm"
-              type="button"
+            <select
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+              disabled={myTasks}
+              className="rounded-lg border px-3 py-2 text-sm max-w-[220px] disabled:opacity-60"
             >
+              <option value="">All assignees</option>
+              {assigneeOptions.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.label}
+                </option>
+              ))}
+            </select>
+
+            <label className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+              <input type="checkbox" checked={dueSoon} onChange={(e) => setDueSoon(e.target.checked)} />
+              Due soon (7d)
+            </label>
+
+            <label className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={myTasks}
+                onChange={(e) => setMyTasks(e.target.checked)}
+              />
+              My tasks
+            </label>
+
+            <button onClick={resetToDefault} className="rounded-lg border bg-background px-3 py-2 text-sm" type="button">
               Reset
             </button>
 
-            {canCreate && (
-              <Link
-                href="/dashboard/tasks/new"
-                className="rounded-lg border bg-background px-3 py-2 text-sm font-medium"
-              >
+            {canCreate ? (
+              <Link href="/dashboard/tasks/new" className="rounded-lg border bg-background px-3 py-2 text-sm font-medium">
                 + New Task
               </Link>
-            )}
-          </>
+            ) : null}
+          </div>
         }
         right={
-          <div className="text-sm text-muted-foreground">
-            Showing <span className="font-medium">{rows.length}</span> of{" "}
-            <span className="font-medium">{tasks.length}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={presetName}
+              onChange={(e) => setPresetName(e.target.value)}
+              placeholder="Preset name"
+              className="min-w-[160px] rounded-lg border px-3 py-2 text-sm"
+            />
+            <button
+              onClick={saveCurrentPreset}
+              disabled={savingPreset}
+              className="rounded-lg border px-3 py-2 text-sm"
+              type="button"
+            >
+              Save preset
+            </button>
+
+            <div className="text-sm text-muted-foreground">
+              Showing <span className="font-medium">{rows.length}</span> of{" "}
+              <span className="font-medium">{tasks.length}</span>
+            </div>
           </div>
         }
       />
 
+      {presets.length ? (
+        <div className="mt-2 mb-4 flex flex-wrap gap-2">
+          {presets.map((p) => (
+            <button
+              key={p.name}
+              onClick={() => deletePreset(p.name)}
+              className="rounded-lg border px-2 py-1 text-xs"
+              type="button"
+              title="Delete preset"
+            >
+              Delete: {p.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <DataTableShell>
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full border-collapse text-sm table-fixed">
+          <colgroup>
+  <col style={{ width: "34%" }} />
+  <col style={{ width: "22%" }} />
+  <col style={{ width: "14%" }} />
+  <col style={{ width: "10%" }} />
+  <col style={{ width: "20%" }} />
+</colgroup>
+
+
           <thead>
             <tr className="bg-muted/30">
-              <Th>Task</Th>
-              <Th>Project</Th>
-              <Th>Assignee</Th>
-              <Th>Due</Th>
-              <Th>Status</Th>
-              <Th>Actions</Th>
+<Th>Task</Th>
+<Th>Project</Th>
+<Th>Assignee</Th>
+<Th>Due</Th>
+<Th>Status</Th>
+
             </tr>
           </thead>
 
           <tbody>
             {rows.map((t) => (
-              <tr key={t.task_id} className="border-t">
+              <tr key={t.task_id} className="border-t align-top">
                 <Td>
-                  <div className="font-semibold">{t.title || "(No title)"}</div>
-                  {t.description ? (
-                    <div className="mt-1 text-xs text-muted-foreground line-clamp-2">
-                      {t.description}
+                  <div className="min-w-0 overflow-hidden">
+                    <div className="font-semibold break-words">{t.title || "(No title)"}</div>
+
+                    {t.description ? (
+                      <div
+                        className="mt-1 text-xs text-muted-foreground break-words overflow-hidden"
+                        style={{
+                          display: "-webkit-box",
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: "vertical",
+                        }}
+                        title={t.description}
+                      >
+                        {truncate(t.description, 500)}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-xs text-muted-foreground">No description</div>
+                    )}
+
+                    <div className="mt-2 text-[11px] text-muted-foreground font-mono overflow-hidden text-ellipsis">
+                      {t.task_id}
                     </div>
-                  ) : null}
-                  <div className="mt-1 text-xs text-muted-foreground">{t.task_id}</div>
+
+                    <div className="mt-3 flex flex-wrap gap-3 text-sm">
+                      <Link href={`/dashboard/tasks/${t.task_id}`} className="underline">
+                        View / Edit
+                      </Link>
+                    </div>
+                  </div>
                 </Td>
 
                 <Td>
-                  {t.opportunity_id ? (
-                    <Link href={`/dashboard/opportunities/${t.opportunity_id}`} className="underline">
-                      {t.opportunity_name || t.opportunity_id}
-                    </Link>
-                  ) : (
-                    <span className="text-muted-foreground">Unassigned</span>
-                  )}
+                  <div className="min-w-0 overflow-hidden">
+                    {t.opportunity_id ? (
+                      <Link href={`/dashboard/opportunities/${t.opportunity_id}`} className="underline font-medium break-words">
+                        {t.opportunity_name || "View project"}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">Unassigned</span>
+                    )}
+                  </div>
                 </Td>
 
                 <Td>
-                  {t.assigned_to ? (
-                    <span>
-                      {t.assignee_name || t.assigned_to}
-                      {t.assignee_role ? <span className="text-muted-foreground"> ({t.assignee_role})</span> : null}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">Unassigned</span>
-                  )}
+                  <div className="min-w-0 overflow-hidden break-words">
+                    {t.assignee_name ? (
+                      <span className="font-medium">{t.assignee_name}</span>
+                    ) : (
+                      <span className="text-muted-foreground">Unassigned</span>
+                    )}
+                  </div>
                 </Td>
+<Td>
+  {t.due_at ? (
+    <div className="text-sm">
+      {new Date(t.due_at).toLocaleDateString()}
+    </div>
+  ) : (
+    <span className="text-muted-foreground">None</span>
+  )}
+</Td>
 
                 <Td>
-                  {t.due_at ? (
-                    <span>{fmtDate(t.due_at)}</span>
-                  ) : (
-                    <span className="text-muted-foreground">None</span>
-                  )}
-                </Td>
+                  <div className="min-w-0 overflow-hidden">
+                    <div className="text-sm font-semibold">{t.status}</div>
 
-                <Td>
-                  <span className="rounded-full border px-3 py-1 text-xs font-semibold">
-                    {statusLabel(t.status)}
-                  </span>
-                </Td>
-
-                <Td>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Link href={`/dashboard/tasks/${t.task_id}`} className="underline">
-                      View / Edit
-                    </Link>
-
-                    {normalizeStatus(t.status) !== "done" ? (
-                      <button type="button" onClick={() => markDone(t.task_id)} className="underline">
-                        Mark done
-                      </button>
+                    {canUpdateStatus ? (
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {STATUSES.map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            disabled={statusWorking === t.task_id || s === t.status}
+                            onClick={() => updateTaskStatus(t.task_id, s)}
+                            className="rounded-lg border px-2 py-1 text-xs disabled:opacity-50"
+                          >
+                            {statusWorking === t.task_id && s !== t.status ? "Working..." : s}
+                          </button>
+                        ))}
+                      </div>
                     ) : null}
                   </div>
                 </Td>
@@ -256,10 +541,10 @@ export default function TasksTable({ role, tasks }: Props) {
 
             {rows.length === 0 && (
               <tr>
-                <Td colSpan={6}>
+                <Td colSpan={5}>
                   <EmptyState
                     title="No tasks found"
-                    description="Try clearing search/filters or create a new task."
+                    description="Try changing filters or create a new task."
                     actionHref={canCreate ? "/dashboard/tasks/new" : undefined}
                     actionLabel={canCreate ? "+ Create task" : undefined}
                   />
