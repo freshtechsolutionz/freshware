@@ -28,7 +28,7 @@ const supabase = supabaseBrowser();
 /**
  * Paste your Fresh Tech account UUID here (accounts.id).
  */
-const DEFAULT_ACCOUNT_ID = "91c6d89b-ab0d-4990-939c-3abe033df8ee"; // <-- keep your current value
+const DEFAULT_ACCOUNT_ID = "91c6d89b-ab0d-4990-939c-3abe033df8ee";
 
 function formatDateTime(iso: string) {
   try {
@@ -212,13 +212,9 @@ export default function AdminAccessRequestsPage() {
     setSelected(r);
     setApprovedNow(false);
 
-    // Default: clients are the most common case
     setBaseRole("CLIENT_USER");
     setDeptRole("STAFF");
-
-    setAssignAccountId(
-      DEFAULT_ACCOUNT_ID || "91c6d89b-ab0d-4990-939c-3abe033df8ee"
-    );
+    setAssignAccountId(DEFAULT_ACCOUNT_ID || "91c6d89b-ab0d-4990-939c-3abe033df8ee");
     setPanelOpen(true);
   }
 
@@ -228,10 +224,53 @@ export default function AdminAccessRequestsPage() {
     setApprovedNow(false);
   }
 
-  async function markApprovedFromPanel() {
+  async function approveAndProvision() {
     if (!selected) return;
-    await setStatus(selected.id, "approved");
-    setApprovedNow(true);
+
+    const accountId = assignAccountId.trim();
+
+    if (!accountId || !isValidUuid(accountId)) {
+      setErrorMsg("Please paste a valid Account ID (accounts.id UUID) before approving.");
+      return;
+    }
+
+    setErrorMsg(null);
+    setWorkingId(selected.id);
+
+    // Reviewer (current admin user)
+    const { data: auth } = await supabase.auth.getUser();
+    const reviewerId = auth.user?.id ?? null;
+
+    try {
+      const res = await fetch("/api/admin/approve-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          access_request_id: selected.id,
+          email: selected.email.trim().toLowerCase(),
+          full_name: selected.full_name.trim(),
+          role: finalRole,
+          account_id: accountId,
+          reviewer_id: reviewerId,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        setWorkingId(null);
+        setErrorMsg(json?.error || "Approval failed.");
+        return;
+      }
+
+      setWorkingId(null);
+      setApprovedNow(true);
+      setToast("Approved + user provisioned");
+      await load();
+    } catch (e: any) {
+      setWorkingId(null);
+      setErrorMsg(e?.message || "Approval failed.");
+    }
   }
 
   function copyInviteEmail(email: string) {
@@ -263,27 +302,14 @@ export default function AdminAccessRequestsPage() {
       `Assignments:\n` +
       `- role = ${finalRole}\n` +
       `- account_id = ${accountId ? accountId : "(PASTE_ACCOUNT_ID)"}\n\n` +
-      `1) Create Auth User\n` +
-      `   Supabase → Authentication → Users → Add user\n` +
-      `   - Email: ${email}\n\n` +
-      `2) Create/Update Profile row\n` +
-      `   Table: public.profiles\n` +
-      `   - id = (AUTH_USER_ID)\n` +
-      `   - full_name = "${fullName.replace(/"/g, '\\"')}"\n` +
-      `   - role = "${finalRole}"\n` +
-      `   - account_id = ${accountId ? `"${accountId}"` : "(YOUR_ACCOUNT_ID)"}\n\n` +
-      `   SQL template:\n` +
-      `   insert into public.profiles (id, full_name, role, account_id)\n` +
-      `   values ('AUTH_USER_ID', '${fullName.replace(/'/g, "''")}', '${finalRole}', ${accountId ? `'${accountId}'` : "NULL"})\n` +
-      `   on conflict (id) do update\n` +
-      `   set full_name = excluded.full_name,\n` +
-      `       role = excluded.role,\n` +
-      `       account_id = excluded.account_id;\n\n` +
-      `3) Mark request approved in Freshware\n` +
-      `   - Click "Mark approved"\n\n` +
-      `4) Send invite email\n` +
-      `   - Portal entry: https://freshware.freshtechsolutionz.com/\n` +
-      `   - Tell them: use "Forgot password" to set/reset password.\n`;
+      `Auto-approval is enabled.\n` +
+      `When you click "Approve + Create User", Freshware will:\n` +
+      `- Create the Auth user (if missing)\n` +
+      `- Upsert the profiles row with role + account_id\n` +
+      `- Mark the request approved\n\n` +
+      `After approval:\n` +
+      `- Send the invite email\n` +
+      `- User sets password via "Forgot password"\n`;
 
     navigator.clipboard.writeText(text);
     setToast("Setup steps copied");
@@ -291,7 +317,7 @@ export default function AdminAccessRequestsPage() {
 
   const panelAccountOk = useMemo(() => {
     const v = assignAccountId.trim();
-    if (!v) return true; // allow blank for now
+    if (!v) return false;
     return isValidUuid(v);
   }, [assignAccountId]);
 
@@ -315,9 +341,7 @@ export default function AdminAccessRequestsPage() {
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="text-xl font-semibold text-gray-900">
-            Access Requests
-          </div>
+          <div className="text-xl font-semibold text-gray-900">Access Requests</div>
           <div className="mt-1 text-sm text-gray-600">
             Review invite-only requests and approve or deny access.
           </div>
@@ -346,9 +370,7 @@ export default function AdminAccessRequestsPage() {
 
       {!isAdmin ? (
         <div className="rounded-3xl border bg-white p-8 shadow-sm">
-          <div className="text-lg font-semibold text-gray-900">
-            Not authorized
-          </div>
+          <div className="text-lg font-semibold text-gray-900">Not authorized</div>
           <div className="mt-2 text-sm text-gray-600">
             You do not have permission to view access requests.
           </div>
@@ -357,26 +379,10 @@ export default function AdminAccessRequestsPage() {
         <section className="rounded-3xl border bg-white p-6 shadow-sm">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div className="flex flex-wrap gap-2">
-              <TabButton
-                active={activeTab === "new"}
-                onClick={() => setActiveTab("new")}
-                label={`New (${counts.new})`}
-              />
-              <TabButton
-                active={activeTab === "approved"}
-                onClick={() => setActiveTab("approved")}
-                label={`Approved (${counts.approved})`}
-              />
-              <TabButton
-                active={activeTab === "denied"}
-                onClick={() => setActiveTab("denied")}
-                label={`Denied (${counts.denied})`}
-              />
-              <TabButton
-                active={activeTab === "all"}
-                onClick={() => setActiveTab("all")}
-                label={`All (${counts.all})`}
-              />
+              <TabButton active={activeTab === "new"} onClick={() => setActiveTab("new")} label={`New (${counts.new})`} />
+              <TabButton active={activeTab === "approved"} onClick={() => setActiveTab("approved")} label={`Approved (${counts.approved})`} />
+              <TabButton active={activeTab === "denied"} onClick={() => setActiveTab("denied")} label={`Denied (${counts.denied})`} />
+              <TabButton active={activeTab === "all"} onClick={() => setActiveTab("all")} label={`All (${counts.all})`} />
             </div>
 
             <div className="w-full lg:w-[360px]">
@@ -391,57 +397,40 @@ export default function AdminAccessRequestsPage() {
 
           <div className="mt-6 grid grid-cols-1 gap-3">
             {filtered.length === 0 ? (
-              <div className="rounded-2xl border bg-gray-50 p-6 text-sm text-gray-600">
-                No requests found.
-              </div>
+              <div className="rounded-2xl border bg-gray-50 p-6 text-sm text-gray-600">No requests found.</div>
             ) : (
               filtered.map((r) => (
                 <div key={r.id} className="rounded-3xl border bg-white p-5">
                   <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-base font-semibold text-gray-900">
-                          {r.full_name}
-                        </div>
+                        <div className="text-base font-semibold text-gray-900">{r.full_name}</div>
                         <StatusPill status={normalizeStatus(r.status)} />
                       </div>
 
-                      <div className="mt-1 text-sm text-gray-700 break-all">
-                        {r.email}
-                      </div>
+                      <div className="mt-1 text-sm text-gray-700 break-all">{r.email}</div>
 
                       <div className="mt-2 text-sm text-gray-600">
-                        <span className="font-semibold text-gray-900">
-                          Requested:
-                        </span>{" "}
-                        {formatDateTime(r.created_at)}
+                        <span className="font-semibold text-gray-900">Requested:</span> {formatDateTime(r.created_at)}
                         {r.company ? (
                           <>
                             {" "}
                             <span className="text-gray-400">•</span>{" "}
-                            <span className="font-semibold text-gray-900">
-                              Company:
-                            </span>{" "}
-                            {r.company}
+                            <span className="font-semibold text-gray-900">Company:</span> {r.company}
                           </>
                         ) : null}
                       </div>
 
                       {r.reason ? (
                         <div className="mt-3 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                          <div className="text-xs font-semibold text-gray-700">
-                            Reason
-                          </div>
+                          <div className="text-xs font-semibold text-gray-700">Reason</div>
                           <div className="mt-1">{r.reason}</div>
                         </div>
                       ) : null}
 
                       {normalizeStatus(r.status) !== "new" ? (
                         <div className="mt-3 text-xs text-gray-500">
-                          Reviewed at{" "}
-                          {r.reviewed_at
-                            ? formatDateTime(r.reviewed_at)
-                            : "unknown"}
+                          Reviewed at {r.reviewed_at ? formatDateTime(r.reviewed_at) : "unknown"}
                         </div>
                       ) : null}
                     </div>
@@ -467,12 +456,10 @@ export default function AdminAccessRequestsPage() {
                         </>
                       ) : (
                         <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                          <div className="text-xs font-semibold text-gray-700">
-                            Next step
-                          </div>
+                          <div className="text-xs font-semibold text-gray-700">Next step</div>
                           <div className="mt-1">
                             {normalizeStatus(r.status) === "approved"
-                              ? "Create Auth user + profile, then send the invite message."
+                              ? "Approved in system. Send invite email if needed."
                               : "No further action required."}
                           </div>
                         </div>
@@ -486,9 +473,7 @@ export default function AdminAccessRequestsPage() {
                       </button>
 
                       <a
-                        href={`mailto:${r.email}?subject=${encodeURIComponent(
-                          "Freshware Portal Access"
-                        )}`}
+                        href={`mailto:${r.email}?subject=${encodeURIComponent("Freshware Portal Access")}`}
                         className="text-center rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
                       >
                         Email requester
@@ -504,21 +489,14 @@ export default function AdminAccessRequestsPage() {
 
       {panelOpen && selected ? (
         <>
-          <div
-            className="fixed inset-0 bg-black/30"
-            onClick={closePanel}
-            role="button"
-            aria-label="Close"
-          />
+          <div className="fixed inset-0 bg-black/30" onClick={closePanel} role="button" aria-label="Close" />
           <aside className="fixed right-0 top-0 h-full w-full sm:w-[520px] bg-white border-l shadow-xl">
             <div className="h-full flex flex-col">
               <div className="p-6 border-b flex items-start justify-between gap-4">
                 <div className="min-w-0">
-                  <div className="text-lg font-semibold text-gray-900">
-                    Approve access
-                  </div>
+                  <div className="text-lg font-semibold text-gray-900">Approve access</div>
                   <div className="mt-1 text-sm text-gray-600">
-                    Choose role and account, then follow the checklist.
+                    Choose role + account. Clicking approve will also create the Auth user + profile automatically.
                   </div>
                 </div>
                 <button
@@ -531,12 +509,8 @@ export default function AdminAccessRequestsPage() {
 
               <div className="p-6 overflow-auto flex-1">
                 <div className="rounded-3xl border bg-gray-50 p-5">
-                  <div className="text-sm font-semibold text-gray-900">
-                    {selected.full_name}
-                  </div>
-                  <div className="mt-1 text-sm text-gray-700 break-all">
-                    {selected.email}
-                  </div>
+                  <div className="text-sm font-semibold text-gray-900">{selected.full_name}</div>
+                  <div className="mt-1 text-sm text-gray-700 break-all">{selected.email}</div>
                   <div className="mt-2 text-xs text-gray-600">
                     Requested {formatDateTime(selected.created_at)}
                     {selected.company ? ` • ${selected.company}` : ""}
@@ -544,14 +518,10 @@ export default function AdminAccessRequestsPage() {
                 </div>
 
                 <div className="mt-6 rounded-3xl border bg-white p-5">
-                  <div className="text-sm font-semibold text-gray-900">
-                    Assignments
-                  </div>
+                  <div className="text-sm font-semibold text-gray-900">Assignments</div>
 
                   <label className="block mt-4">
-                    <div className="text-sm font-semibold text-gray-900">
-                      Who is this user?
-                    </div>
+                    <div className="text-sm font-semibold text-gray-900">Who is this user?</div>
                     <select
                       value={baseRole}
                       onChange={(e) => setBaseRole(e.target.value as BaseRole)}
@@ -565,9 +535,7 @@ export default function AdminAccessRequestsPage() {
 
                   {baseRole === "STAFF" ? (
                     <label className="block mt-4">
-                      <div className="text-sm font-semibold text-gray-900">
-                        Department role
-                      </div>
+                      <div className="text-sm font-semibold text-gray-900">Department role</div>
                       <select
                         value={deptRole}
                         onChange={(e) => setDeptRole(e.target.value as DeptRole)}
@@ -580,28 +548,20 @@ export default function AdminAccessRequestsPage() {
                       </select>
 
                       <div className="mt-2 text-xs text-gray-500">
-                        Platform ADMIN is not assigned here. Approve as
-                        STAFF/OPS/SALES/MARKETING, then promote to ADMIN only if
-                        needed.
+                        Platform ADMIN is not assigned here. Approve as STAFF/OPS/SALES/MARKETING, then promote to ADMIN only if needed.
                       </div>
                     </label>
                   ) : (
                     <div className="mt-4 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                      <div className="text-xs font-semibold text-gray-700">
-                        Client roles
-                      </div>
+                      <div className="text-xs font-semibold text-gray-700">Client roles</div>
                       <div className="mt-1">
-                        CLIENT_USER is for most client team members.
-                        CLIENT_ADMIN is for the client’s main manager/owner
-                        inside their account.
+                        CLIENT_USER is for most client team members. CLIENT_ADMIN is for the client’s main manager/owner inside their account.
                       </div>
                     </div>
                   )}
 
                   <label className="block mt-4">
-                    <div className="text-sm font-semibold text-gray-900">
-                      Account ID (recommended)
-                    </div>
+                    <div className="text-sm font-semibold text-gray-900">Account ID</div>
                     <input
                       value={assignAccountId}
                       onChange={(e) => setAssignAccountId(e.target.value)}
@@ -609,34 +569,26 @@ export default function AdminAccessRequestsPage() {
                       placeholder="Paste accounts.id UUID"
                     />
                     {!panelAccountOk ? (
-                      <div className="mt-2 text-xs text-red-600">
-                        This does not look like a UUID. Either clear it or paste
-                        a valid accounts.id value.
-                      </div>
+                      <div className="mt-2 text-xs text-red-600">Paste a valid accounts.id UUID.</div>
                     ) : (
                       <div className="mt-2 text-xs text-gray-500">
-                        For Fresh Tech staff, this can be the Fresh Tech
-                        account. For clients, use the client’s account_id.
+                        For Fresh Tech staff, this can be the Fresh Tech account. For clients, use the client’s account_id.
                       </div>
                     )}
                   </label>
 
                   <div className="mt-4 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                    <div className="text-xs font-semibold text-gray-700">
-                      Final role that will be assigned
-                    </div>
-                    <div className="mt-1 font-semibold text-gray-900">
-                      {finalRole}
-                    </div>
+                    <div className="text-xs font-semibold text-gray-700">Final role to assign</div>
+                    <div className="mt-1 font-semibold text-gray-900">{finalRole}</div>
                   </div>
 
                   <div className="mt-5 flex flex-wrap gap-2">
                     <button
-                      onClick={markApprovedFromPanel}
+                      onClick={approveAndProvision}
                       disabled={!panelAccountOk || workingId === selected.id}
                       className="rounded-2xl px-4 py-2 text-sm font-semibold bg-black text-white hover:opacity-90 disabled:opacity-50"
                     >
-                      {workingId === selected.id ? "Working..." : "Mark approved"}
+                      {workingId === selected.id ? "Working..." : "Approve + Create User"}
                     </button>
 
                     <button
@@ -651,7 +603,7 @@ export default function AdminAccessRequestsPage() {
                       onClick={copySetupSteps}
                       className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
                     >
-                      Copy setup steps
+                      Copy steps
                     </button>
 
                     <button
@@ -664,18 +616,13 @@ export default function AdminAccessRequestsPage() {
 
                   {approvedNow ? (
                     <div className="mt-4 rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-                      Request marked approved. Next: create Auth user + profile,
-                      then send the invite email.
+                      Approved and user was provisioned. Next: send invite email (copy button above).
                     </div>
                   ) : (
                     <div className="mt-4 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                      <div className="text-xs font-semibold text-gray-700">
-                        Next steps
-                      </div>
+                      <div className="text-xs font-semibold text-gray-700">What happens when you approve</div>
                       <div className="mt-1">
-                        Click “Copy setup steps” for the exact checklist + SQL
-                        template, then create the Auth user and profile in
-                        Supabase.
+                        Freshware will create the auth user (if missing), upsert the profile with role + account_id, then mark the request approved.
                       </div>
                     </div>
                   )}
@@ -683,8 +630,7 @@ export default function AdminAccessRequestsPage() {
               </div>
 
               <div className="p-6 border-t text-xs text-gray-500">
-                Guided approvals reduce mistakes until we automate user creation
-                with a secure server-side function.
+                This approval flow is server-side and uses the service role key so it can create Auth users securely.
               </div>
             </div>
           </aside>
@@ -710,8 +656,7 @@ function TabButton(props: { active: boolean; onClick: () => void; label: string 
 }
 
 function StatusPill(props: { status: "new" | "approved" | "denied" }) {
-  const label =
-    props.status === "new" ? "New" : props.status === "approved" ? "Approved" : "Denied";
+  const label = props.status === "new" ? "New" : props.status === "approved" ? "Approved" : "Denied";
   const cls =
     props.status === "new"
       ? "bg-gray-50 text-gray-700 border-gray-200"

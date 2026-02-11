@@ -38,9 +38,7 @@ export default async function DashboardHome() {
     return (
       <div className="rounded-3xl border bg-white p-6 shadow-sm">
         <div className="text-lg font-semibold">Dashboard</div>
-        <div className="mt-2 text-sm text-gray-600">
-          Unable to load your profile.
-        </div>
+        <div className="mt-2 text-sm text-gray-600">Unable to load your profile.</div>
       </div>
     );
   }
@@ -62,7 +60,16 @@ export default async function DashboardHome() {
 
   const accountId = profile.account_id;
 
-  // Metrics: all scoped to this account_id where it applies
+  // ✅ Get account name for display
+  const { data: acct } = await supabase
+    .from("accounts")
+    .select("name")
+    .eq("id", accountId)
+    .maybeSingle();
+
+  const accountName = acct?.name || accountId;
+
+  // Metrics: scoped by account_id
   const [
     usersRes,
     tasksRes,
@@ -76,48 +83,22 @@ export default async function DashboardHome() {
   ] = await Promise.all([
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("account_id", accountId),
     supabase.from("tasks").select("task_id", { count: "exact", head: true }).eq("account_id", accountId),
-    supabase
-      .from("opportunities")
-      .select("id, amount, stage", { count: "exact" })
-      .eq("account_id", accountId),
-    supabase
-      .from("opportunities")
-      .select("id", { count: "exact", head: true })
-      .eq("account_id", accountId),
+    supabase.from("opportunities").select("id, amount, stage", { count: "exact" }).eq("account_id", accountId),
+    supabase.from("opportunities").select("id", { count: "exact", head: true }).eq("account_id", accountId),
 
-    // Active projects: status not done/closed/completed/cancelled
-    supabase
-      .from("projects")
-      .select("id,status", { count: "exact" })
-      .eq("account_id", accountId),
-    supabase
-      .from("projects")
-      .select("id", { count: "exact", head: true })
-      .eq("account_id", accountId),
+    supabase.from("projects").select("id,status", { count: "exact" }).eq("account_id", accountId),
+    supabase.from("projects").select("id", { count: "exact", head: true }).eq("account_id", accountId),
 
-    // Meetings (Freshware DB table)
-    supabase
-      .from("meetings")
-      .select("id", { count: "exact", head: true })
-      .eq("account_id", accountId),
+    supabase.from("meetings").select("id", { count: "exact", head: true }).eq("account_id", accountId),
 
-    // YCBM bookings (if table exists). If it errors, we just show 0.
-    supabase
-      .from("ycbm_bookings")
-      .select("id", { count: "exact", head: true })
-      .eq("account_id", accountId),
+    supabase.from("ycbm_bookings").select("id", { count: "exact", head: true }).eq("account_id", accountId),
 
-    // Revenue entries (if table exists). If it errors, we show placeholder.
-    supabase
-      .from("revenue_entries")
-      .select("amount", { count: "exact" })
-      .eq("account_id", accountId),
+    supabase.from("revenue_entries").select("amount", { count: "exact" }).eq("account_id", accountId),
   ]);
 
   const totalUsers = usersRes.count ?? 0;
   const totalTasks = tasksRes.count ?? 0;
 
-  // Opportunities
   let openOppCount = 0;
   let openPipeline = 0;
 
@@ -133,7 +114,6 @@ export default async function DashboardHome() {
 
   const totalOppCount = oppAllRes.count ?? 0;
 
-  // Projects
   let activeProjects = 0;
   if (!projectsActiveRes.error) {
     const rows = (projectsActiveRes.data || []) as any[];
@@ -144,13 +124,9 @@ export default async function DashboardHome() {
   }
   const totalProjects = projectsAllRes.count ?? 0;
 
-  // Meetings
   const meetingsBooked = meetingsRes.count ?? 0;
-
-  // YCBM bookings can be missing table; handle gracefully
   const ycbmBooked = ycbmRes.error ? 0 : (ycbmRes.count ?? 0);
 
-  // Revenue (only show if table exists and user is CEO/ADMIN)
   let revenueTotal: number | null = null;
   if (!revenueRes.error && isAdmin) {
     const rows = (revenueRes.data || []) as any[];
@@ -169,7 +145,6 @@ export default async function DashboardHome() {
     { label: "Activities", href: "/dashboard/activities" },
   ];
 
-  // CEO/Admin extras
   const adminTools = [
     { label: "Access Requests", href: "/admin/access-requests" },
     { label: "User Manager", href: "/admin/users" },
@@ -188,7 +163,7 @@ export default async function DashboardHome() {
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <InfoPill label="Name" value={profile.full_name || "Unknown"} />
               <InfoPill label="Role" value={profile.role} />
-              <InfoPill label="Account" value={accountId} mono />
+              <InfoPill label="Account" value={accountName} />
               <InfoPill label="Access" value="Granted" good />
             </div>
           </div>
@@ -207,11 +182,9 @@ export default async function DashboardHome() {
       </section>
 
       <section className="rounded-3xl border bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="text-lg font-semibold text-gray-900">Tools</div>
-            <div className="mt-1 text-sm text-gray-600">Select a tool below to start working.</div>
-          </div>
+        <div>
+          <div className="text-lg font-semibold text-gray-900">Tools</div>
+          <div className="mt-1 text-sm text-gray-600">Select a tool below to start working.</div>
         </div>
 
         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -221,18 +194,16 @@ export default async function DashboardHome() {
         </div>
 
         {isAdmin ? (
-          <>
-            <div className="mt-8 border-t pt-6">
-              <div className="text-sm font-semibold text-gray-900">CEO Admin Panel</div>
-              <div className="mt-1 text-sm text-gray-600">Approve users, assign roles, and manage accounts.</div>
+          <div className="mt-8 border-t pt-6">
+            <div className="text-sm font-semibold text-gray-900">CEO Admin Panel</div>
+            <div className="mt-1 text-sm text-gray-600">Approve users, assign roles, and manage accounts.</div>
 
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {adminTools.map((t) => (
-                  <ToolCard key={t.href} href={t.href} label={t.label} />
-                ))}
-              </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {adminTools.map((t) => (
+                <ToolCard key={t.href} href={t.href} label={t.label} />
+              ))}
             </div>
-          </>
+          </div>
         ) : null}
       </section>
 
@@ -244,7 +215,7 @@ export default async function DashboardHome() {
           </div>
 
           <div className="text-xs text-gray-500">
-            Account scoped: <span className="font-semibold">{accountId}</span>
+            Account scoped: <span className="font-semibold">{accountName}</span>
           </div>
         </div>
 
@@ -258,20 +229,10 @@ export default async function DashboardHome() {
           <MetricCard title="Total Users" value={fmt(totalUsers)} sub="Users in this account" note="Account scoped." />
           <MetricCard
             title="Revenue"
-            value={isAdmin ? (revenueTotal === null ? "—" : `$${fmt(revenueTotal)}`) : "Restricted"
-            }
+            value={isAdmin ? (revenueTotal === null ? "—" : `$${fmt(revenueTotal)}`) : "Restricted"}
             sub={isAdmin ? "From revenue_entries" : "CEO/Admin only"}
             note={isAdmin ? "Connect revenue entries to dashboards." : "Only visible to CEO/Admin."}
           />
-        </div>
-
-        <div className="mt-6 rounded-2xl border bg-gray-50 p-4 text-xs text-gray-700">
-          <div className="font-semibold text-gray-900">Data Notes</div>
-          <ul className="mt-2 list-disc pl-5 space-y-1">
-            <li>Visitors: GA4 integration will populate Site Visitors and Active Users.</li>
-            <li>Meetings: Freshware meetings table. YCBM optional via ycbm_bookings (if present).</li>
-            <li>Pipeline/Projects/Tasks: Freshware database, scoped by account_id.</li>
-          </ul>
         </div>
       </section>
     </div>
@@ -280,32 +241,25 @@ export default async function DashboardHome() {
 
 function ToolCard(props: { href: string; label: string }) {
   return (
-    <Link
-      href={props.href}
-      className="group rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition"
-    >
+    <Link href={props.href} className="group rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-base font-semibold text-gray-900">{props.label}</div>
           <div className="mt-1 text-sm text-gray-600">Open</div>
         </div>
-        <div className="rounded-2xl border px-3 py-2 text-sm font-semibold group-hover:bg-gray-50">
-          Go
-        </div>
+        <div className="rounded-2xl border px-3 py-2 text-sm font-semibold group-hover:bg-gray-50">Go</div>
       </div>
     </Link>
   );
 }
 
-function InfoPill(props: { label: string; value: string; mono?: boolean; good?: boolean }) {
+function InfoPill(props: { label: string; value: string; good?: boolean }) {
   const base = "rounded-2xl border px-4 py-3";
   const bg = props.good ? "bg-green-50 border-green-200" : "bg-gray-50";
   return (
     <div className={`${base} ${bg}`}>
       <div className="text-xs font-semibold text-gray-700">{props.label}</div>
-      <div className={`mt-1 text-sm font-semibold text-gray-900 ${props.mono ? "font-mono" : ""}`}>
-        {props.value}
-      </div>
+      <div className="mt-1 text-sm font-semibold text-gray-900">{props.value}</div>
     </div>
   );
 }

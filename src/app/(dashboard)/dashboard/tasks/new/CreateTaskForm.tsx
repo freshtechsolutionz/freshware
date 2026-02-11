@@ -9,7 +9,8 @@ const supabase = supabaseBrowser();
 type OpportunityLite = { id: string; name: string | null };
 type ProfileLite = { id: string; full_name: string | null; role: string | null; account_id: string | null };
 
-type TaskStatus = "todo" | "in_progress" | "done";
+// Must match DB enum labels EXACTLY
+type TaskStatus = "New" | "In Progress" | "Done" | "Blocked";
 
 function todayISO() {
   const d = new Date();
@@ -26,18 +27,15 @@ export default function CreateTaskForm() {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Current user + account scope
   const [me, setMe] = useState<ProfileLite | null>(null);
 
-  // Form fields (match your schema)
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [opportunityId, setOpportunityId] = useState<string>("");
   const [assignedTo, setAssignedTo] = useState<string>("");
-  const [status, setStatus] = useState<TaskStatus>("todo");
+  const [status, setStatus] = useState<TaskStatus>("New");
   const [dueDate, setDueDate] = useState<string>(todayISO());
 
-  // Dropdown data
   const [opps, setOpps] = useState<OpportunityLite[]>([]);
   const [users, setUsers] = useState<ProfileLite[]>([]);
 
@@ -74,20 +72,27 @@ export default function CreateTaskForm() {
       const profile = (prof as ProfileLite) ?? null;
       if (alive) setMe(profile);
 
-      // Load opportunities (best effort)
+      if (!profile?.account_id) {
+        if (alive) {
+          setErrorMsg("Your profile is missing account_id. Ask an admin to assign your account.");
+          setLoading(false);
+        }
+        return;
+      }
+
       const oppRes = await supabase
         .from("opportunities")
         .select("id,name")
+        .eq("account_id", profile.account_id)
         .order("created_at", { ascending: false });
 
       if (alive) setOpps(((oppRes.data as any) ?? []) as OpportunityLite[]);
 
-      // Load users in your org (best effort)
-     const userRes = await supabase
-  .from("profiles")
-  .select("id,full_name,role,account_id")
-  .eq("account_id", profile.account_id)
-  .order("full_name", { ascending: true });
+      const userRes = await supabase
+        .from("profiles")
+        .select("id,full_name,role,account_id")
+        .eq("account_id", profile.account_id)
+        .order("full_name", { ascending: true });
 
       if (alive) setUsers(((userRes.data as any) ?? []) as ProfileLite[]);
 
@@ -115,9 +120,8 @@ export default function CreateTaskForm() {
       return;
     }
 
-    // Multi-tenant safety: tasks should always carry account_id
     if (!me.account_id) {
-      setErrorMsg("Your profile is missing account_id. Set profiles.account_id for your user before creating tasks.");
+      setErrorMsg("Your profile is missing account_id. Ask an admin to assign your account.");
       return;
     }
 
@@ -128,7 +132,7 @@ export default function CreateTaskForm() {
       description: description.trim() ? description.trim() : null,
       opportunity_id: opportunityId ? opportunityId : null,
       assigned_to: assignedTo ? assignedTo : null,
-      status, // enum in DB
+      status, // enum label
       due_at: dueDate ? new Date(`${dueDate}T12:00:00`).toISOString() : null,
       created_by: me.id,
       account_id: me.account_id,
@@ -217,9 +221,10 @@ export default function CreateTaskForm() {
             onChange={(e) => setStatus(e.target.value as TaskStatus)}
             className="mt-2 w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10 bg-white"
           >
-            <option value="todo">To do</option>
-            <option value="in_progress">In progress</option>
-            <option value="done">Done</option>
+            <option value="New">New</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Blocked">Blocked</option>
+            <option value="Done">Done</option>
           </select>
         </label>
 
@@ -260,11 +265,6 @@ export default function CreateTaskForm() {
         >
           Cancel
         </button>
-      </div>
-
-      <div className="mt-6 rounded-2xl border bg-gray-50 p-4 text-xs text-gray-600">
-        This task will be created under account_id:{" "}
-        <span className="font-semibold">{me?.account_id || "missing"}</span>
       </div>
     </form>
   );
