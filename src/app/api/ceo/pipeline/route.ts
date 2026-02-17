@@ -71,3 +71,13 @@ export async function GET(req: Request) {
     { status: 200 }
   );
 }
+return NextResponse.json(
+  {
+    __pipeline_route_version: "2026-02-17-stage-only",
+    range_days: rangeDays,
+    since: sinceIso,
+    total_opportunities: rows.length,
+    byStage,
+  },
+  { status: 200 }
+);
