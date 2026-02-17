@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import ApiProbe from "@/components/dashboard/ApiProbe";
+
 
 type OverdueTask = {
   task_id: string;
@@ -114,7 +114,7 @@ export default function OverdueReportPage() {
         ) : null}
       </div>
 
-      <ApiProbe paths={["/api/ceo/overdue"]} />
+      
 
       <div className="rounded-2xl border bg-background p-5">
         <div className="text-sm font-semibold">Overdue</div>

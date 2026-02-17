@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import ApiProbe from "@/components/dashboard/ApiProbe";
+
 
 type PipelineResponse = {
   range_days: number;
@@ -94,7 +94,7 @@ export default function PipelineReportPage() {
         ) : null}
       </div>
 
-      <ApiProbe paths={[`/api/ceo/pipeline?range=${encodeURIComponent(range)}`]} />
+      
 
       <div className="rounded-2xl border bg-background p-5">
         <div className="text-sm font-semibold">By Stage</div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import ApiProbe from "@/components/dashboard/ApiProbe";
+
 
 type HealthCounts = { GREEN: number; YELLOW: number; RED: number; UNKNOWN: number };
 
@@ -100,7 +100,7 @@ export default function ProjectsHealthReportPage() {
         ) : null}
       </div>
 
-      <ApiProbe paths={["/api/ceo/projects-health"]} />
+   
 
       <div className="rounded-2xl border bg-background p-5">
         <div className="text-sm font-semibold">Projects</div>
