@@ -61,16 +61,7 @@ export async function GET(req: Request) {
     byStage[stage].totalAmount += amt;
   }
 
-  return NextResponse.json(
-    {
-      range_days: rangeDays,
-      since: sinceIso,
-      total_opportunities: rows.length,
-      byStage,
-    },
-    { status: 200 }
-  );
-}
+  
 return NextResponse.json(
   {
     __pipeline_route_version: "2026-02-17-stage-only",
@@ -81,3 +72,4 @@ return NextResponse.json(
   },
   { status: 200 }
 );
+}
