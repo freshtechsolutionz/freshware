@@ -17,6 +17,8 @@ type Opportunity = {
   owner_user_id: string | null;
   last_activity_at: string | null;
   created_at: string | null;
+  deleted_at: string | null;
+  deleted_by: string | null;
 };
 
 type Account = { id: string; name: string | null };
@@ -48,7 +50,6 @@ export default async function OpportunitiesPage() {
   const user = auth.user;
   if (!user) redirect("/portal?next=/dashboard/opportunities");
 
-  // Role (adjust table/column names if yours differ)
   const { data: profile } = await supabase
     .from("profiles")
     .select("role")
@@ -60,8 +61,9 @@ export default async function OpportunitiesPage() {
   const { data: opportunitiesData, error: oppErr } = await supabase
     .from("opportunities")
     .select(
-      "id,name,stage,service_line,amount,probability,close_date,account_id,contact_id,owner_user_id,last_activity_at,created_at"
+      "id,name,stage,service_line,amount,probability,close_date,account_id,contact_id,owner_user_id,last_activity_at,created_at,deleted_at,deleted_by"
     )
+    .is("deleted_at", null)
     .order("created_at", { ascending: false });
 
   if (oppErr) {
@@ -77,13 +79,8 @@ export default async function OpportunitiesPage() {
 
   const opportunities = (opportunitiesData || []) as Opportunity[];
 
-  const accountIds = Array.from(
-    new Set(opportunities.map((o) => o.account_id).filter(Boolean))
-  ) as string[];
-
-  const contactIds = Array.from(
-    new Set(opportunities.map((o) => o.contact_id).filter(Boolean))
-  ) as string[];
+  const accountIds = Array.from(new Set(opportunities.map((o) => o.account_id).filter(Boolean))) as string[];
+  const contactIds = Array.from(new Set(opportunities.map((o) => o.contact_id).filter(Boolean))) as string[];
 
   const { data: accountsData } = accountIds.length
     ? await supabase.from("accounts").select("id,name").in("id", accountIds)
@@ -93,28 +90,15 @@ export default async function OpportunitiesPage() {
     ? await supabase.from("contacts").select("id,name,email").in("id", contactIds)
     : { data: [] as Contact[] };
 
-  const accountsMap = Object.fromEntries(
-    (accountsData || []).map((a) => [a.id, a])
-  ) as Record<string, Account>;
-
-  const contactsMap = Object.fromEntries(
-    (contactsData || []).map((c) => [c.id, c])
-  ) as Record<string, Contact>;
+  const accountsMap = Object.fromEntries((accountsData || []).map((a) => [a.id, a])) as Record<string, Account>;
+  const contactsMap = Object.fromEntries((contactsData || []).map((c) => [c.id, c])) as Record<string, Contact>;
 
   return (
     <>
-      <PageHeader
-        title="Opportunities"
-        subtitle="Track pipeline, activity, and next steps."
-      />
+      <PageHeader title="Opportunities" subtitle="Track pipeline, activity, and next steps." />
 
       <div className="rounded-2xl border bg-background p-4 shadow-sm">
-        <OpportunitiesTable
-          role={role}
-          opportunities={opportunities}
-          accountsMap={accountsMap}
-          contactsMap={contactsMap}
-        />
+        <OpportunitiesTable role={role} opportunities={opportunities} accountsMap={accountsMap} contactsMap={contactsMap} />
       </div>
     </>
   );

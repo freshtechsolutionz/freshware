@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
 import { SALES_STAGES, SERVICE_LINES, formatServiceLine } from "@/lib/salesConfig";
@@ -51,6 +51,24 @@ export default function OpportunityForm({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  // Auto-assign account on create if blank (from current user's profile)
+  useEffect(() => {
+    if (mode !== "create") return;
+    if (accountId) return;
+
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      const uid = data?.user?.id;
+      if (!uid) return;
+
+      const { data: prof } = await supabase.from("profiles").select("account_id").eq("id", uid).maybeSingle();
+      const acct = (prof as any)?.account_id ?? null;
+
+      if (acct) setAccountId(acct);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
   const filteredContacts = useMemo(() => {
     if (!accountId) return contacts || [];
     return (contacts || []).filter((c) => (c.account_id || "") === accountId);
@@ -72,34 +90,38 @@ export default function OpportunityForm({
       contact_id: contactId || null,
     };
 
-    // On create, set owner_user_id to current user
-    if (mode === "create") {
-      const { data } = await supabase.auth.getUser();
-      const uid = data?.user?.id;
-      if (uid) payload.owner_user_id = uid;
-    }
-
     try {
       if (mode === "create") {
+        const { data } = await supabase.auth.getUser();
+        const uid = data?.user?.id;
+        if (uid) payload.owner_user_id = uid;
+
+        // Require account_id for create (keeps data clean)
+        if (!payload.account_id) {
+          throw new Error("Account is required. Assign an account to your profile or select one.");
+        }
+
         const { error: insErr } = await supabase.from("opportunities").insert(payload);
         if (insErr) throw new Error(insErr.message);
 
-        setSuccess("Opportunity created ✅");
+        setSuccess("Opportunity created");
         router.push(afterSaveHref);
         router.refresh();
         return;
       }
 
-      // edit
       if (!initial?.id) throw new Error("Missing opportunity id");
-      const { error: updErr } = await supabase
-        .from("opportunities")
-        .update(payload)
-        .eq("id", initial.id);
 
-      if (updErr) throw new Error(updErr.message);
+      const res = await fetch(`/api/opportunities/${initial.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-      setSuccess("Opportunity updated ✅");
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Save failed");
+
+      setSuccess("Opportunity updated");
       router.push(afterSaveHref);
       router.refresh();
     } catch (e: any) {
@@ -111,57 +133,41 @@ export default function OpportunityForm({
 
   async function deleteOpportunity() {
     if (!initial?.id) return;
-    const ok = window.confirm("Delete this opportunity? This cannot be undone.");
+
+    const ok = window.confirm("Delete this opportunity? This will archive it.");
     if (!ok) return;
 
     setSaving(true);
     setError(null);
     setSuccess(null);
 
-    const { error: delErr } = await supabase
-      .from("opportunities")
-      .delete()
-      .eq("id", initial.id);
+    try {
+      const res = await fetch(`/api/opportunities/${initial.id}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Delete failed");
 
-    if (delErr) {
-      setError(delErr.message);
+      router.push(afterSaveHref);
+      router.refresh();
+    } catch (e: any) {
+      setError(e?.message || "Delete failed");
       setSaving(false);
-      return;
     }
-
-    setSaving(false);
-    router.push(afterSaveHref);
-    router.refresh();
   }
 
   return (
-    <div
-      style={{
-        border: "1px solid #e5e7eb",
-        borderRadius: 16,
-        padding: 16,
-        background: "#fff",
-        boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-      }}
-    >
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          gap: 12,
-        }}
-      >
+    <div className="rounded-2xl border bg-background p-4 shadow-sm">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Field label="Opportunity name">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g., GHBC App Platform"
-            style={inputStyle}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
           />
         </Field>
 
         <Field label="Stage">
-          <select value={stage} onChange={(e) => setStage(e.target.value)} style={inputStyle}>
+          <select value={stage} onChange={(e) => setStage(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-sm">
             {SALES_STAGES.map((s) => (
               <option key={s} value={s}>
                 {s}
@@ -174,9 +180,9 @@ export default function OpportunityForm({
           <select
             value={serviceLine}
             onChange={(e) => setServiceLine(e.target.value)}
-            style={inputStyle}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
           >
-            <option value="">—</option>
+            <option value="">(none)</option>
             {SERVICE_LINES.map((s) => (
               <option key={s} value={s}>
                 {formatServiceLine(s)}
@@ -190,7 +196,7 @@ export default function OpportunityForm({
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             inputMode="numeric"
-            style={inputStyle}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
           />
         </Field>
 
@@ -199,7 +205,7 @@ export default function OpportunityForm({
             value={probability}
             onChange={(e) => setProbability(e.target.value)}
             inputMode="numeric"
-            style={inputStyle}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
           />
         </Field>
 
@@ -208,7 +214,7 @@ export default function OpportunityForm({
             type="date"
             value={closeDate || ""}
             onChange={(e) => setCloseDate(e.target.value)}
-            style={inputStyle}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
           />
         </Field>
 
@@ -217,12 +223,11 @@ export default function OpportunityForm({
             value={accountId}
             onChange={(e) => {
               setAccountId(e.target.value);
-              // reset contact if account changes
               setContactId("");
             }}
-            style={inputStyle}
+            className="w-full rounded-xl border px-3 py-2 text-sm"
           >
-            <option value="">—</option>
+            <option value="">(none)</option>
             {(accounts || []).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name || a.id}
@@ -232,8 +237,8 @@ export default function OpportunityForm({
         </Field>
 
         <Field label="Contact (filtered by account when set)">
-          <select value={contactId} onChange={(e) => setContactId(e.target.value)} style={inputStyle}>
-            <option value="">—</option>
+          <select value={contactId} onChange={(e) => setContactId(e.target.value)} className="w-full rounded-xl border px-3 py-2 text-sm">
+            <option value="">(none)</option>
             {filteredContacts.map((c) => (
               <option key={c.id} value={c.id}>
                 {(c.name || "Unnamed") + (c.email ? ` (${c.email})` : "")}
@@ -244,31 +249,24 @@ export default function OpportunityForm({
       </div>
 
       {error && (
-        <div style={{ marginTop: 12, color: "crimson" }}>
-          <b>Error:</b> {error}
+        <div className="mt-3 rounded-xl border bg-background p-3 text-sm">
+          <b className="text-red-600">Error:</b> {error}
         </div>
       )}
 
       {success && (
-        <div style={{ marginTop: 12, color: "green" }}>
-          <b>{success}</b>
+        <div className="mt-3 rounded-xl border bg-background p-3 text-sm">
+          <b className="text-green-700">{success}</b>
         </div>
       )}
 
-      <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <div className="mt-4 flex flex-col sm:flex-row gap-2 sm:items-center">
         <button
           onClick={save}
           disabled={saving}
-          style={{
-            padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid #111",
-            background: "#111",
-            color: "#fff",
-            cursor: "pointer",
-          }}
+          className="w-full sm:w-auto rounded-xl border bg-black px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition"
         >
-          {saving ? "Saving…" : mode === "create" ? "Create Opportunity" : "Save Changes"}
+          {saving ? "Saving..." : mode === "create" ? "Create Opportunity" : "Save Changes"}
         </button>
 
         <button
@@ -277,13 +275,7 @@ export default function OpportunityForm({
             router.refresh();
           }}
           disabled={saving}
-          style={{
-            padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid #ddd",
-            background: "#fff",
-            cursor: "pointer",
-          }}
+          className="w-full sm:w-auto rounded-xl border bg-background px-4 py-2 text-sm font-semibold hover:bg-muted/30 transition"
         >
           Cancel
         </button>
@@ -292,23 +284,11 @@ export default function OpportunityForm({
           <button
             onClick={deleteOpportunity}
             disabled={saving}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #ef4444",
-              background: "#fff",
-              color: "#ef4444",
-              cursor: "pointer",
-              marginLeft: "auto",
-            }}
+            className="w-full sm:w-auto sm:ml-auto rounded-xl border border-red-200 bg-background px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 transition"
           >
             Delete
           </button>
         )}
-      </div>
-
-      <div style={{ marginTop: 10, fontSize: 12, opacity: 0.65 }}>
-        Tip: For v1, keep “create” tight (CEO/ADMIN/SALES). Everyone else can view/edit if RLS allows.
       </div>
     </div>
   );
@@ -317,16 +297,8 @@ export default function OpportunityForm({
 function Field({ label, children }: { label: string; children: any }) {
   return (
     <div>
-      <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>{label}</div>
+      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
       {children}
     </div>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: 10,
-  borderRadius: 10,
-  border: "1px solid #ddd",
-  background: "#fff",
-};

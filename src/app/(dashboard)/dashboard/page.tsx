@@ -2,6 +2,8 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createServerClient } from "@supabase/ssr";
+import CeoOverview from "@/components/dashboard/CeoOverview";
+import AgentPanel from "@/components/dashboard/AgentPanel";
 
 export const runtime = "nodejs";
 
@@ -60,16 +62,10 @@ export default async function DashboardHome() {
 
   const accountId = profile.account_id;
 
-  // ✅ Get account name for display
-  const { data: acct } = await supabase
-    .from("accounts")
-    .select("name")
-    .eq("id", accountId)
-    .maybeSingle();
-
+  const { data: acct } = await supabase.from("accounts").select("name").eq("id", accountId).maybeSingle();
   const accountName = acct?.name || accountId;
 
-  // Metrics: scoped by account_id
+  // Original Executive Overview metrics
   const [
     usersRes,
     tasksRes,
@@ -83,6 +79,7 @@ export default async function DashboardHome() {
   ] = await Promise.all([
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("account_id", accountId),
     supabase.from("tasks").select("task_id", { count: "exact", head: true }).eq("account_id", accountId),
+
     supabase.from("opportunities").select("id, amount, stage", { count: "exact" }).eq("account_id", accountId),
     supabase.from("opportunities").select("id", { count: "exact", head: true }).eq("account_id", accountId),
 
@@ -90,7 +87,6 @@ export default async function DashboardHome() {
     supabase.from("projects").select("id", { count: "exact", head: true }).eq("account_id", accountId),
 
     supabase.from("meetings").select("id", { count: "exact", head: true }).eq("account_id", accountId),
-
     supabase.from("ycbm_bookings").select("id", { count: "exact", head: true }).eq("account_id", accountId),
 
     supabase.from("revenue_entries").select("amount", { count: "exact" }).eq("account_id", accountId),
@@ -152,6 +148,7 @@ export default async function DashboardHome() {
 
   return (
     <div className="space-y-8">
+      {/* Header */}
       <section className="rounded-3xl border bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
@@ -181,6 +178,31 @@ export default async function DashboardHome() {
         </div>
       </section>
 
+      {/* Agent + Command Center (top priority) */}
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <AgentPanel accountId={accountId} accountName={accountName} viewerId={profile.id} />
+
+        <div className="rounded-3xl border bg-white p-6 shadow-sm">
+          <div className="text-sm font-semibold text-gray-900">CEO Command Center</div>
+          <div className="mt-1 text-sm text-gray-600">Everything here is clickable. This is your daily operating system.</div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <CommandCard title="Weekly CEO Report" desc="Auto-generated report for leadership focus." href="/dashboard#weekly-report" />
+            <CommandCard title="Overdue Tasks" desc="Clear blockers and overdue items fast." href="/dashboard/reports/overdue" />
+            <CommandCard title="Pipeline Drilldown" desc="Stages, totals, and top deals." href="/dashboard/reports/pipeline" />
+            <CommandCard title="Project Health Heatmap" desc="Which projects are at risk right now." href="/dashboard/reports/projects-health" />
+          </div>
+
+          <div className="mt-4 text-xs text-gray-500">
+            Next: export to PDF, one-click investor summary, and CEO daily brief notifications.
+          </div>
+        </div>
+      </section>
+
+      {/* CEO Overview + charts (clickable) */}
+      <CeoOverview />
+
+      {/* Tools */}
       <section className="rounded-3xl border bg-white p-6 shadow-sm">
         <div>
           <div className="text-lg font-semibold text-gray-900">Tools</div>
@@ -207,13 +229,13 @@ export default async function DashboardHome() {
         ) : null}
       </section>
 
+      {/* Executive Overview (your original section stays) */}
       <section className="rounded-3xl border bg-white p-6 shadow-sm">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-lg font-semibold text-gray-900">Executive Overview</div>
             <div className="mt-1 text-sm text-gray-600">Live metrics (Freshware DB plus external sources when connected).</div>
           </div>
-
           <div className="text-xs text-gray-500">
             Account scoped: <span className="font-semibold">{accountName}</span>
           </div>
@@ -248,6 +270,18 @@ function ToolCard(props: { href: string; label: string }) {
           <div className="mt-1 text-sm text-gray-600">Open</div>
         </div>
         <div className="rounded-2xl border px-3 py-2 text-sm font-semibold group-hover:bg-gray-50">Go</div>
+      </div>
+    </Link>
+  );
+}
+
+function CommandCard(props: { title: string; desc: string; href: string }) {
+  return (
+    <Link href={props.href} className="rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition">
+      <div className="text-sm font-semibold text-gray-900">{props.title}</div>
+      <div className="mt-1 text-sm text-gray-600">{props.desc}</div>
+      <div className="mt-4 inline-flex rounded-2xl border px-3 py-2 text-sm font-semibold hover:bg-gray-50">
+        Open
       </div>
     </Link>
   );

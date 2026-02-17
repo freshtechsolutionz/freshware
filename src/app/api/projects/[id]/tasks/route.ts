@@ -6,8 +6,8 @@ function isStaff(role: string | null | undefined) {
   return ["CEO", "ADMIN", "STAFF", "OPS", "SALES", "MARKETING"].includes(r);
 }
 
-export async function PATCH(
-  req: Request,
+export async function GET(
+  _req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
   const { id } = await ctx.params;
@@ -21,42 +21,52 @@ export async function PATCH(
   const accountId = profile.account_id;
   if (!accountId) return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
 
-  if (!isStaff(profile.role)) {
-    return NextResponse.json({ error: "Staff only" }, { status: 403 });
-  }
-
   // Confirm project belongs to this account
-  const check = await supabase
+  const proj = await supabase
     .from("projects")
     .select("id")
     .eq("id", id)
     .eq("account_id", accountId)
     .maybeSingle();
 
-  if (check.error) return NextResponse.json({ error: check.error.message }, { status: 500 });
-  if (!check.data) return NextResponse.json({ error: "Project not found." }, { status: 404 });
+  if (proj.error) return NextResponse.json({ error: proj.error.message }, { status: 500 });
+  if (!proj.data) return NextResponse.json({ error: "Project not found." }, { status: 404 });
 
-  const body = await req.json().catch(() => ({}));
-
-  // Allow-list fields that ProjectClient edits
-  const patch: any = {};
-  if ("stage" in body) patch.stage = body.stage ? String(body.stage) : null;
-  if ("status" in body) patch.status = body.status ? String(body.status) : null;
-  if ("health" in body) patch.health = body.health ? String(body.health) : null;
-  if ("due_date" in body) patch.due_date = body.due_date ? String(body.due_date) : null;
-  if ("start_date" in body) patch.start_date = body.start_date ? String(body.start_date) : null;
-  if ("description" in body) patch.description = body.description ? String(body.description) : null;
-  if ("internal_notes" in body) patch.internal_notes = body.internal_notes ? String(body.internal_notes) : null;
-
+  // Load tasks scoped to project + account
   const { data, error } = await supabase
-    .from("projects")
-    .update(patch)
-    .eq("id", id)
+    .from("tasks")
+    .select("task_id, title, description, status, due_at, assigned_to, project_id")
     .eq("account_id", accountId)
-    .select("*")
-    .maybeSingle();
+    .eq("project_id", id)
+    .order("created_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ ok: true, project: data }, { status: 200 });
+  const rows = (data || []) as any[];
+
+  // Hydrate assignee names
+  const ids = Array.from(new Set(rows.map((t) => t.assigned_to).filter(Boolean))) as string[];
+  let nameMap: Record<string, string> = {};
+
+  if (ids.length) {
+    const usersRes = await supabase
+      .from("profiles")
+      .select("id, full_name")
+      .in("id", ids)
+      .eq("account_id", accountId);
+
+    if (!usersRes.error) {
+      nameMap = {};
+      for (const u of (usersRes.data || []) as any[]) {
+        nameMap[u.id] = u.full_name || u.id;
+      }
+    }
+  }
+
+  const hydrated = rows.map((t) => ({
+    ...t,
+    assignee_name: t.assigned_to ? nameMap[t.assigned_to] || null : null,
+  }));
+
+  return NextResponse.json({ tasks: hydrated }, { status: 200 });
 }

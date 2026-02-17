@@ -6,22 +6,22 @@ function isStaff(role: string | null | undefined) {
   return ["CEO", "ADMIN", "STAFF", "OPS", "SALES", "MARKETING"].includes(r);
 }
 
-export async function GET(
-  _req: Request,
-  ctx: { params: Promise<{ id: string }> }
-) {
+function asNumberOrNull(v: any) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
 
   const { supabase, user, profile } = await requireViewer();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!profile || profile.role === "PENDING") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  if (!profile || profile.role === "PENDING") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const accountId = profile.account_id;
   if (!accountId) return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
 
-  // Confirm project belongs to this account
   const proj = await supabase
     .from("projects")
     .select("id")
@@ -33,37 +33,29 @@ export async function GET(
   if (!proj.data) return NextResponse.json({ error: "Project not found." }, { status: 404 });
 
   const { data, error } = await supabase
-    .from("project_updates")
-    .select("id, project_id, title, message, body, visibility, client_visible, created_at, created_by, account_id")
+    .from("project_financials")
+    .select("id, account_id, project_id, budget_total, cost_to_date, billed_to_date, paid_to_date, currency, updated_at, created_at")
     .eq("account_id", accountId)
     .eq("project_id", id)
-    .order("created_at", { ascending: false });
+    .maybeSingle();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ updates: data || [] }, { status: 200 });
+  return NextResponse.json({ financials: data || null }, { status: 200 });
 }
 
-export async function POST(
-  req: Request,
-  ctx: { params: Promise<{ id: string }> }
-) {
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
 
   const { supabase, user, profile } = await requireViewer();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!profile || profile.role === "PENDING") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  if (!profile || profile.role === "PENDING") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  if (!isStaff(profile.role)) {
-    return NextResponse.json({ error: "Staff only" }, { status: 403 });
-  }
+  if (!isStaff(profile.role)) return NextResponse.json({ error: "Staff only" }, { status: 403 });
 
   const accountId = profile.account_id;
   if (!accountId) return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
 
-  // Confirm project belongs to this account
   const proj = await supabase
     .from("projects")
     .select("id")
@@ -76,49 +68,24 @@ export async function POST(
 
   const body = await req.json().catch(() => ({}));
 
-  const title =
-    body?.title === null || body?.title === undefined
-      ? null
-      : String(body.title).trim() || null;
-
-  const message =
-    body?.message === null || body?.message === undefined
-      ? null
-      : String(body.message).trim() || null;
-
-  const richBody =
-    body?.body === null || body?.body === undefined
-      ? null
-      : String(body.body).trim() || null;
-
-  if (!message && !richBody) {
-    return NextResponse.json(
-      { error: "Missing required content: message or body" },
-      { status: 400 }
-    );
-  }
-
-  const visibility = body?.visibility ? String(body.visibility).trim() : "internal";
-  const client_visible = Boolean(body?.client_visible);
-
-  const payload = {
+  const payload: any = {
     account_id: accountId,
     project_id: id,
-    title,
-    message,
-    body: richBody,
-    visibility,
-    client_visible,
-    created_by: user.id,
+    budget_total: asNumberOrNull(body?.budget_total),
+    cost_to_date: asNumberOrNull(body?.cost_to_date),
+    billed_to_date: asNumberOrNull(body?.billed_to_date),
+    paid_to_date: asNumberOrNull(body?.paid_to_date),
+    currency: body?.currency ? String(body.currency).trim() : "USD",
+    updated_at: new Date().toISOString(),
   };
 
   const { data, error } = await supabase
-    .from("project_updates")
-    .insert(payload)
-    .select("id, project_id, title, message, body, visibility, client_visible, created_at, created_by, account_id")
+    .from("project_financials")
+    .upsert(payload, { onConflict: "project_id" })
+    .select("id, account_id, project_id, budget_total, cost_to_date, billed_to_date, paid_to_date, currency, updated_at, created_at")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ update: data }, { status: 200 });
+  return NextResponse.json({ financials: data }, { status: 200 });
 }
