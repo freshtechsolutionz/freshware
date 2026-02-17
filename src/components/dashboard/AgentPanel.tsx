@@ -83,91 +83,81 @@ export default function AgentPanel(_: AgentPanelProps) {
   }
 
   return (
-    <div className="rounded-3xl bg-gradient-to-br from-black/20 via-black/10 to-black/0 p-[1px] shadow-sm">
-      <div className="rounded-3xl border border-white/70 bg-white/75 backdrop-blur-md p-6">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-base font-semibold text-gray-900">CEO Command Agent</div>
-            <div className="mt-1 text-xs text-gray-600">Reports · Drilldowns · Actions</div>
-          </div>
-          <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-xs font-semibold">
-            {busy ? "Working" : "Online"}
-          </span>
+    <div className="fw-card-strong p-7">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-base font-semibold text-gray-900">CEO Command Agent</div>
+          <div className="mt-1 text-xs text-gray-600">Reports · Drilldowns · Actions</div>
+        </div>
+        <span className="fw-chip">{busy ? "Working" : "Online"}</span>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <button
+          type="button"
+          onClick={weeklyReport}
+          disabled={busy}
+          className="fw-btn h-11 text-sm disabled:opacity-60"
+        >
+          Weekly CEO Report
+        </button>
+
+        <Link href="/dashboard/reports/overdue" className="fw-btn h-11 text-sm flex items-center justify-center">
+          Overdue Tasks
+        </Link>
+
+        <Link href="/dashboard/reports/pipeline" className="fw-btn h-11 text-sm flex items-center justify-center">
+          Pipeline Drilldown
+        </Link>
+
+        <Link
+          href="/dashboard/reports/projects-health"
+          className="fw-btn h-11 text-sm flex items-center justify-center"
+        >
+          Project Health Heatmap
+        </Link>
+      </div>
+
+      <div className="mt-5 rounded-2xl border border-black/10 bg-white/70 backdrop-blur-md">
+        <div className="max-h-[320px] overflow-auto p-4 space-y-3">
+          {messages.map((m, idx) => (
+            <div
+              key={idx}
+              className={cls(
+                "rounded-2xl border border-black/10 p-3",
+                m.role === "user" ? "bg-black text-white border-black/20" : "bg-white text-gray-900"
+              )}
+            >
+              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed m-0">{m.text}</pre>
+            </div>
+          ))}
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <button
-            type="button"
-            onClick={weeklyReport}
-            disabled={busy}
-            className="h-11 rounded-2xl border border-black/10 bg-white px-4 text-sm font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60"
-          >
-            Weekly CEO Report
-          </button>
-
-          <Link
-            href="/dashboard/reports/overdue"
-            className="h-11 rounded-2xl border border-black/10 bg-white px-4 text-sm font-semibold text-gray-900 hover:bg-gray-50 flex items-center justify-center"
-          >
-            Overdue Tasks
-          </Link>
-
-          <Link
-            href="/dashboard/reports/pipeline"
-            className="h-11 rounded-2xl border border-black/10 bg-white px-4 text-sm font-semibold text-gray-900 hover:bg-gray-50 flex items-center justify-center"
-          >
-            Pipeline Drilldown
-          </Link>
-
-          <Link
-            href="/dashboard/reports/projects-health"
-            className="h-11 rounded-2xl border border-black/10 bg-white px-4 text-sm font-semibold text-gray-900 hover:bg-gray-50 flex items-center justify-center"
-          >
-            Project Health Heatmap
-          </Link>
-        </div>
-
-        <div className="mt-4 rounded-2xl border border-black/10 bg-white/85">
-          <div className="max-h-[320px] overflow-auto p-4 space-y-3">
-            {messages.map((m, idx) => (
-              <div
-                key={idx}
-                className={cls(
-                  "rounded-2xl border border-black/10 p-3",
-                  m.role === "user" ? "bg-black text-white border-black/20" : "bg-white text-gray-900"
-                )}
-              >
-                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed m-0">{m.text}</pre>
-              </div>
-            ))}
+        <div className="border-t border-black/10 p-3">
+          <div className="flex gap-2">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && canSend) sendAgent(input);
+              }}
+              className="h-10 w-full rounded-xl border border-black/10 bg-white px-3 text-sm outline-none"
+              placeholder="Ask CEO questions or issue a command..."
+            />
+            <button
+              onClick={() => sendAgent(input)}
+              disabled={!canSend}
+              className={cls(
+                "h-10 rounded-xl px-4 text-sm font-semibold",
+                canSend ? "bg-black text-white hover:opacity-90" : "bg-black/20 text-white/70"
+              )}
+              type="button"
+            >
+              Send
+            </button>
           </div>
-
-          <div className="border-t border-black/10 p-3">
-            <div className="flex gap-2">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && canSend) sendAgent(input);
-                }}
-                className="h-10 w-full rounded-xl border border-black/10 bg-white px-3 text-sm outline-none"
-                placeholder="Ask CEO questions or issue a command..."
-              />
-              <button
-                onClick={() => sendAgent(input)}
-                disabled={!canSend}
-                className={cls(
-                  "h-10 rounded-xl px-4 text-sm font-semibold",
-                  canSend ? "bg-black text-white hover:opacity-90" : "bg-black/20 text-white/70"
-                )}
-                type="button"
-              >
-                Send
-              </button>
-            </div>
-            <div className="mt-2 text-[11px] text-gray-600">
-              Reports are instant. Interactive drilldowns live in the dashboard pages.
-            </div>
+          <div className="mt-2 text-[11px] text-gray-600">
+            Reports are instant. Interactive drilldowns live in the dashboard pages.
           </div>
         </div>
       </div>

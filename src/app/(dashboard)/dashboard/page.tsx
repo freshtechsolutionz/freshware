@@ -38,7 +38,7 @@ export default async function DashboardHome() {
 
   if (profErr || !prof) {
     return (
-      <div className="rounded-3xl border bg-white p-6 shadow-sm">
+      <div className="fw-card-strong p-7">
         <div className="text-lg font-semibold">Dashboard</div>
         <div className="mt-2 text-sm text-gray-600">Unable to load your profile.</div>
       </div>
@@ -51,7 +51,7 @@ export default async function DashboardHome() {
 
   if (!profile.account_id) {
     return (
-      <div className="rounded-3xl border bg-white p-6 shadow-sm">
+      <div className="fw-card-strong p-7">
         <div className="text-lg font-semibold">Dashboard</div>
         <div className="mt-2 text-sm text-gray-600">
           Your profile is missing an account assignment. Ask an admin to set profiles.account_id.
@@ -62,10 +62,14 @@ export default async function DashboardHome() {
 
   const accountId = profile.account_id;
 
-  const { data: acct } = await supabase.from("accounts").select("name").eq("id", accountId).maybeSingle();
+  const { data: acct } = await supabase
+    .from("accounts")
+    .select("name")
+    .eq("id", accountId)
+    .maybeSingle();
   const accountName = acct?.name || accountId;
 
-  // Original Executive Overview metrics
+  // Executive Overview metrics (server-side)
   const [
     usersRes,
     tasksRes,
@@ -147,9 +151,9 @@ export default async function DashboardHome() {
   ];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       {/* Header */}
-      <section className="rounded-3xl border bg-white p-6 shadow-sm">
+      <section className="fw-card-strong p-7">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="text-2xl font-semibold text-gray-900">Freshware Dashboard</div>
@@ -157,7 +161,7 @@ export default async function DashboardHome() {
               Logged in as: <span className="font-semibold text-gray-900">{auth.user.email}</span>
             </div>
 
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <InfoPill label="Name" value={profile.full_name || "Unknown"} />
               <InfoPill label="Role" value={profile.role} />
               <InfoPill label="Account" value={accountName} />
@@ -166,11 +170,11 @@ export default async function DashboardHome() {
           </div>
 
           <div className="flex flex-wrap gap-2 pt-2 lg:pt-0">
-            <Link href="/" className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+            <Link href="/" className="fw-btn text-sm">
               Portal entry
             </Link>
             {isAdmin ? (
-              <Link href="/admin" className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+              <Link href="/admin" className="fw-btn text-sm">
                 Admin
               </Link>
             ) : null}
@@ -178,49 +182,67 @@ export default async function DashboardHome() {
         </div>
       </section>
 
-      {/* Agent + Command Center (top priority) */}
+      {/* Agent + Command Center */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <AgentPanel accountId={accountId} accountName={accountName} viewerId={profile.id} />
 
-        <div className="rounded-3xl border bg-white p-6 shadow-sm">
+        <div className="fw-card-strong p-7">
           <div className="text-sm font-semibold text-gray-900">CEO Command Center</div>
-          <div className="mt-1 text-sm text-gray-600">Everything here is clickable. This is your daily operating system.</div>
-
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <CommandCard title="Weekly CEO Report" desc="Auto-generated report for leadership focus." href="/dashboard#weekly-report" />
-            <CommandCard title="Overdue Tasks" desc="Clear blockers and overdue items fast." href="/dashboard/reports/overdue" />
-            <CommandCard title="Pipeline Drilldown" desc="Stages, totals, and top deals." href="/dashboard/reports/pipeline" />
-            <CommandCard title="Project Health Heatmap" desc="Which projects are at risk right now." href="/dashboard/reports/projects-health" />
+          <div className="mt-1 text-sm text-gray-600">
+            Everything here is clickable. This is your daily operating system.
           </div>
 
-          <div className="mt-4 text-xs text-gray-500">
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <CommandCard
+              title="Weekly CEO Report"
+              desc="Auto-generated report for leadership focus."
+              href="/dashboard#weekly-report"
+            />
+            <CommandCard
+              title="Overdue Tasks"
+              desc="Clear blockers and overdue items fast."
+              href="/dashboard/reports/overdue"
+            />
+            <CommandCard
+              title="Pipeline Drilldown"
+              desc="Stages, totals, and top deals."
+              href="/dashboard/reports/pipeline"
+            />
+            <CommandCard
+              title="Project Health Heatmap"
+              desc="Which projects are at risk right now."
+              href="/dashboard/reports/projects-health"
+            />
+          </div>
+
+          <div className="mt-5 text-xs text-gray-500">
             Next: export to PDF, one-click investor summary, and CEO daily brief notifications.
           </div>
         </div>
       </section>
 
-      {/* CEO Overview + charts (clickable) */}
+      {/* CEO Overview + charts */}
       <CeoOverview />
 
       {/* Tools */}
-      <section className="rounded-3xl border bg-white p-6 shadow-sm">
+      <section className="fw-card-strong p-7">
         <div>
           <div className="text-lg font-semibold text-gray-900">Tools</div>
           <div className="mt-1 text-sm text-gray-600">Select a tool below to start working.</div>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {tools.map((t) => (
             <ToolCard key={t.href} href={t.href} label={t.label} />
           ))}
         </div>
 
         {isAdmin ? (
-          <div className="mt-8 border-t pt-6">
+          <div className="mt-9 border-t border-black/10 pt-7">
             <div className="text-sm font-semibold text-gray-900">CEO Admin Panel</div>
             <div className="mt-1 text-sm text-gray-600">Approve users, assign roles, and manage accounts.</div>
 
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {adminTools.map((t) => (
                 <ToolCard key={t.href} href={t.href} label={t.label} />
               ))}
@@ -229,26 +251,63 @@ export default async function DashboardHome() {
         ) : null}
       </section>
 
-      {/* Executive Overview (your original section stays) */}
-      <section className="rounded-3xl border bg-white p-6 shadow-sm">
+      {/* Executive Overview */}
+      <section className="fw-card-strong p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-lg font-semibold text-gray-900">Executive Overview</div>
-            <div className="mt-1 text-sm text-gray-600">Live metrics (Freshware DB plus external sources when connected).</div>
+            <div className="mt-1 text-sm text-gray-600">
+              Live metrics (Freshware DB plus external sources when connected).
+            </div>
           </div>
           <div className="text-xs text-gray-500">
             Account scoped: <span className="font-semibold">{accountName}</span>
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard title="Site Visitors Today" value="—" sub="7 days: —  30 days: —" note="GA4 not connected in this build yet." />
-          <MetricCard title="Meetings Booked" value={fmt(meetingsBooked)} sub={`YCBM: ${fmt(ycbmBooked)}`} note="Freshware meetings + optional YCBM." />
-          <MetricCard title="Prospects Open" value={fmt(openOppCount)} sub={`Open pipeline: $${fmt(openPipeline)}`} note="Opportunities not won/lost." />
-          <MetricCard title="Active Projects" value={fmt(activeProjects)} sub={`Total projects: ${fmt(totalProjects)}`} note="Status not done/closed/completed/cancelled." />
-          <MetricCard title="Total Opportunities" value={fmt(totalOppCount)} sub="Open + won + lost" note="Account scoped." />
-          <MetricCard title="Total Tasks" value={fmt(totalTasks)} sub="All tasks in account" note="Account scoped." />
-          <MetricCard title="Total Users" value={fmt(totalUsers)} sub="Users in this account" note="Account scoped." />
+        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard
+            title="Site Visitors Today"
+            value="—"
+            sub="7 days: —  30 days: —"
+            note="GA4 not connected in this build yet."
+          />
+          <MetricCard
+            title="Meetings Booked"
+            value={fmt(meetingsBooked)}
+            sub={`YCBM: ${fmt(ycbmBooked)}`}
+            note="Freshware meetings + optional YCBM."
+          />
+          <MetricCard
+            title="Prospects Open"
+            value={fmt(openOppCount)}
+            sub={`Open pipeline: $${fmt(openPipeline)}`}
+            note="Opportunities not won/lost."
+          />
+          <MetricCard
+            title="Active Projects"
+            value={fmt(activeProjects)}
+            sub={`Total projects: ${fmt(totalProjects)}`}
+            note="Status not done/closed/completed/cancelled."
+          />
+          <MetricCard
+            title="Total Opportunities"
+            value={fmt(totalOppCount)}
+            sub="Open + won + lost"
+            note="Account scoped."
+          />
+          <MetricCard
+            title="Total Tasks"
+            value={fmt(totalTasks)}
+            sub="All tasks in account"
+            note="Account scoped."
+          />
+          <MetricCard
+            title="Total Users"
+            value={fmt(totalUsers)}
+            sub="Users in this account"
+            note="Account scoped."
+          />
           <MetricCard
             title="Revenue"
             value={isAdmin ? (revenueTotal === null ? "—" : `$${fmt(revenueTotal)}`) : "Restricted"}
@@ -263,13 +322,13 @@ export default async function DashboardHome() {
 
 function ToolCard(props: { href: string; label: string }) {
   return (
-    <Link href={props.href} className="group rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition">
+    <Link href={props.href} className="fw-card fw-interactive group block p-6">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-base font-semibold text-gray-900">{props.label}</div>
           <div className="mt-1 text-sm text-gray-600">Open</div>
         </div>
-        <div className="rounded-2xl border px-3 py-2 text-sm font-semibold group-hover:bg-gray-50">Go</div>
+        <div className="fw-chip group-hover:bg-white">Go</div>
       </div>
     </Link>
   );
@@ -277,11 +336,13 @@ function ToolCard(props: { href: string; label: string }) {
 
 function CommandCard(props: { title: string; desc: string; href: string }) {
   return (
-    <Link href={props.href} className="rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition">
-      <div className="text-sm font-semibold text-gray-900">{props.title}</div>
-      <div className="mt-1 text-sm text-gray-600">{props.desc}</div>
-      <div className="mt-4 inline-flex rounded-2xl border px-3 py-2 text-sm font-semibold hover:bg-gray-50">
-        Open
+    <Link href={props.href} className="fw-card fw-interactive block p-6">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-gray-900">{props.title}</div>
+          <div className="mt-1 text-sm text-gray-600">{props.desc}</div>
+        </div>
+        <span className="fw-chip">Open</span>
       </div>
     </Link>
   );
@@ -289,7 +350,7 @@ function CommandCard(props: { title: string; desc: string; href: string }) {
 
 function InfoPill(props: { label: string; value: string; good?: boolean }) {
   const base = "rounded-2xl border px-4 py-3";
-  const bg = props.good ? "bg-green-50 border-green-200" : "bg-gray-50";
+  const bg = props.good ? "bg-green-50 border-green-200" : "bg-gray-50 border-black/10";
   return (
     <div className={`${base} ${bg}`}>
       <div className="text-xs font-semibold text-gray-700">{props.label}</div>
@@ -300,7 +361,7 @@ function InfoPill(props: { label: string; value: string; good?: boolean }) {
 
 function MetricCard(props: { title: string; value: string; sub: string; note: string }) {
   return (
-    <div className="rounded-3xl border bg-white p-5 shadow-sm">
+    <div className="fw-card p-6">
       <div className="text-sm font-semibold text-gray-900">{props.title}</div>
       <div className="mt-2 text-3xl font-semibold text-gray-900">{props.value}</div>
       <div className="mt-2 text-sm text-gray-600">{props.sub}</div>

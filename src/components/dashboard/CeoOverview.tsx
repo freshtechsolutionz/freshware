@@ -21,6 +21,7 @@ type Overview = {
 function fmtMoney(n: number) {
   return "$" + new Intl.NumberFormat().format(Math.round(n));
 }
+
 function cls(...s: Array<string | false | null | undefined>) {
   return s.filter(Boolean).join(" ");
 }
@@ -68,30 +69,38 @@ export default function CeoOverview() {
         </div>
 
         <div className="flex gap-2">
-          <Link href="/dashboard/reports/pipeline" className="rounded-2xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+          <Link href="/dashboard/reports/pipeline" className="fw-btn text-sm">
             Pipeline
           </Link>
-          <Link href="/dashboard/reports/overdue" className="rounded-2xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+          <Link href="/dashboard/reports/overdue" className="fw-btn text-sm">
             Overdue
           </Link>
-          <Link href="/dashboard/reports/projects-health" className="rounded-2xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+          <Link href="/dashboard/reports/projects-health" className="fw-btn text-sm">
             Project Health
           </Link>
-          <button type="button" onClick={load} className="rounded-2xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+          <button type="button" onClick={load} className="fw-btn text-sm">
             Refresh
           </button>
         </div>
       </div>
 
-      {err ? <div className="rounded-3xl border bg-white p-6 shadow-sm text-sm text-gray-700">{err}</div> : null}
+      {err ? <div className="fw-card-strong p-7 text-sm text-gray-700">{err}</div> : null}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Link href="/dashboard/reports/pipeline" className="block">
-          <KpiCard title="Open Pipeline" value={data ? fmtMoney(data.kpis.openPipeline) : "—"} sub={data ? `${data.kpis.openOppCount} open deals` : ""} />
+          <KpiCard
+            title="Open Pipeline"
+            value={data ? fmtMoney(data.kpis.openPipeline) : "—"}
+            sub={data ? `${data.kpis.openOppCount} open deals` : ""}
+          />
         </Link>
 
         <Link href="/dashboard/reports/projects-health" className="block">
-          <KpiCard title="Active Projects" value={data ? String(data.kpis.activeProjects) : "—"} sub={data ? `Total: ${data.kpis.totalProjects}` : ""} />
+          <KpiCard
+            title="Active Projects"
+            value={data ? String(data.kpis.activeProjects) : "—"}
+            sub={data ? `Total: ${data.kpis.totalProjects}` : ""}
+          />
         </Link>
 
         <Link href="/dashboard/reports/overdue" className="block">
@@ -103,9 +112,13 @@ export default function CeoOverview() {
           />
         </Link>
 
-<Link href="/dashboard/meetings" className="block">
-  <KpiCard title="Meetings Booked" value={data ? String(data.kpis.meetingsBooked) : "—"} sub="Freshware meetings" />
-</Link>
+        <Link href="/dashboard/meetings" className="block">
+          <KpiCard
+            title="Meetings Booked"
+            value={data ? String(data.kpis.meetingsBooked) : "—"}
+            sub="Freshware meetings"
+          />
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -125,7 +138,7 @@ export default function CeoOverview() {
 
 function KpiCard(props: { title: string; value: string; sub?: string; alert?: boolean }) {
   return (
-    <div className={cls("rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition", props.alert && "ring-1 ring-black/10")}>
+    <div className={cls("fw-card fw-interactive p-6", props.alert && "ring-1 ring-black/10")}>
       <div className="text-sm font-semibold text-gray-900">{props.title}</div>
       <div className="mt-2 text-3xl font-semibold text-gray-900">{props.value}</div>
       {props.sub ? <div className="mt-2 text-sm text-gray-600">{props.sub}</div> : null}
@@ -135,14 +148,15 @@ function KpiCard(props: { title: string; value: string; sub?: string; alert?: bo
 
 function Panel(props: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition">
+    <div className="fw-card fw-interactive p-6">
       <div className="text-sm font-semibold text-gray-900">{props.title}</div>
       <div className="mt-4">{props.children}</div>
     </div>
   );
 }
+
 function Skeleton() {
-  return <div className="h-44 w-full animate-pulse rounded-2xl border bg-gray-50" />;
+  return <div className="h-44 w-full animate-pulse rounded-2xl border border-black/10 bg-white/60" />;
 }
 
 function BarChart(props: { rows: Array<{ label: string; value: number }>; money?: boolean }) {
@@ -155,9 +169,11 @@ function BarChart(props: { rows: Array<{ label: string; value: number }>; money?
           <div key={r.label} className="space-y-1">
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-semibold text-gray-900 truncate">{r.label}</div>
-              <div className="text-sm text-gray-700">{props.money ? fmtMoney(r.value) : new Intl.NumberFormat().format(r.value)}</div>
+              <div className="text-sm text-gray-700">
+                {props.money ? fmtMoney(r.value) : new Intl.NumberFormat().format(r.value)}
+              </div>
             </div>
-            <div className="h-3 w-full rounded-full bg-gray-100">
+            <div className="h-3 w-full rounded-full bg-black/10">
               <div className="h-3 rounded-full bg-black" style={{ width: `${pct}%` }} />
             </div>
           </div>
@@ -186,7 +202,7 @@ function LineChart(props: { rows: Array<{ label: string; value: number }>; money
 
   return (
     <div className="space-y-3">
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full rounded-2xl border bg-white">
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full rounded-2xl border border-black/10 bg-white/70">
         <path d={d} fill="none" stroke="black" strokeWidth="3" strokeLinecap="round" />
         {pts.map((p) => (
           <circle key={p.label} cx={p.x} cy={p.y} r="4" fill="black" />

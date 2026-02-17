@@ -1,47 +1,20 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
-import { createClient } from "@supabase/supabase-js";
+import { requireViewer } from "@/lib/supabase/route";
 
 export const runtime = "nodejs";
-
-type ProfileRow = {
-  id: string;
-  role: string | null;
-  account_id: string | null;
-};
+export const dynamic = "force-dynamic";
 
 function isStaff(role: string | null | undefined) {
   const r = (role || "").toUpperCase();
   return ["CEO", "ADMIN", "STAFF", "OPS", "SALES", "MARKETING"].includes(r);
 }
 
-function svcSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
-  return createClient(url, key, { auth: { persistSession: false } });
+function startOfMonth(d: Date) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0));
 }
 
-async function getViewer() {
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll: () => cookieStore.getAll() } }
-  );
-
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return { ok: false as const, reason: "Not authenticated" };
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, role, account_id")
-    .eq("id", auth.user.id)
-    .maybeSingle();
-
-  if (!profile) return { ok: false as const, reason: "Missing profile row" };
-  return { ok: true as const, userId: auth.user.id, profile: profile as ProfileRow };
+function addMonths(d: Date, delta: number) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + delta, 1, 0, 0, 0));
 }
 
 function monthKey(d: Date) {
@@ -50,141 +23,141 @@ function monthKey(d: Date) {
   return `${y}-${m}`;
 }
 
-function startOfMonthUTC(d: Date) {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0));
+function monthLabelFromKey(key: string) {
+  // key: YYYY-MM
+  const [y, m] = key.split("-").map((x) => Number(x));
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, 1));
+  return dt.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 }
 
 export async function GET() {
-  try {
-    const viewer = await getViewer();
-    if (!viewer.ok) return NextResponse.json({ error: viewer.reason }, { status: 401 });
+  const { supabase, user, profile } = await requireViewer();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!profile || profile.role === "PENDING") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!isStaff(profile.role)) return NextResponse.json({ error: "Staff only" }, { status: 403 });
 
-    const { profile } = viewer;
-    if (!profile.account_id) return NextResponse.json({ error: "Missing profiles.account_id" }, { status: 400 });
-    if (!isStaff(profile.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const accountId = profile.account_id;
+  if (!accountId) return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
 
-    const svc = svcSupabase();
-    if (!svc) return NextResponse.json({ error: "Missing SUPABASE_SERVICE_ROLE_KEY" }, { status: 500 });
+  // KPIs
+  const nowIso = new Date().toISOString();
 
-    const accountId = profile.account_id;
-    const now = new Date();
-    const nowIso = now.toISOString();
-
-    // Fast counts
-    const [usersRes, tasksRes, meetingsRes, projectsRes, oppRes] = await Promise.all([
-      svc.from("profiles").select("id", { count: "exact", head: true }).eq("account_id", accountId),
-      svc.from("tasks").select("task_id", { count: "exact", head: true }).eq("account_id", accountId),
-      svc.from("meetings").select("id", { count: "exact", head: true }).eq("account_id", accountId),
-      svc.from("projects").select("id,status", { count: "exact" }).eq("account_id", accountId),
-      svc.from("opportunities").select("id, stage, amount").eq("account_id", accountId),
-    ]);
-
-    const totalUsers = usersRes.count ?? 0;
-    const totalTasks = tasksRes.count ?? 0;
-    const meetingsBooked = meetingsRes.count ?? 0;
-
-    // Projects active
-    let activeProjects = 0;
-    let totalProjects = 0;
-    if (!projectsRes.error) {
-      const rows = (projectsRes.data || []) as any[];
-      totalProjects = projectsRes.count ?? rows.length;
-      activeProjects = rows.filter((r) => {
-        const s = String(r.status || "").toLowerCase();
-        return !["done", "closed", "completed", "cancelled"].includes(s);
-      }).length;
-    }
-
-    // Pipeline + stage grouping
-    const oppRows = oppRes.error ? [] : ((oppRes.data || []) as any[]);
-    const openOppRows = oppRows.filter((r) => {
-      const s = String(r.stage || "").toLowerCase();
-      return s !== "won" && s !== "lost";
-    });
-
-    const openOppCount = openOppRows.length;
-    const openPipeline = openOppRows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-
-    const pipelineByStageMap: Record<string, { count: number; amount: number }> = {};
-    for (const r of openOppRows) {
-      const stage = String(r.stage || "Unstaged");
-      if (!pipelineByStageMap[stage]) pipelineByStageMap[stage] = { count: 0, amount: 0 };
-      pipelineByStageMap[stage].count += 1;
-      pipelineByStageMap[stage].amount += Number(r.amount) || 0;
-    }
-
-    const pipelineByStage = Object.entries(pipelineByStageMap)
-      .map(([stage, v]) => ({ stage, count: v.count, amount: v.amount }))
-      .sort((a, b) => b.amount - a.amount);
-
-    const topDeals = openOppRows
-      .slice()
-      .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0))
-      .slice(0, 5)
-      .map((r) => ({
-        id: r.id,
-        stage: r.stage || null,
-        amount: Number(r.amount) || 0,
-      }));
-
-    // Overdue tasks + blockers + status counts
-    const tasksDetailRes = await svc
+  const [
+    tasksRes,
+    blockedRes,
+    meetingsRes,
+    projectsRes,
+    oppRes,
+    revenueRes,
+  ] = await Promise.all([
+    // overdue tasks (not Done, due < now)
+    supabase
       .from("tasks")
-      .select("task_id, status, due_at")
-      .eq("account_id", accountId);
+      .select("task_id", { count: "exact", head: true })
+      .eq("account_id", accountId)
+      .lt("due_at", nowIso)
+      .not("status", "in", '("Done")'),
 
-    let overdueTasks = 0;
-    let blockedTasks = 0;
-    const tasksByStatus: Record<string, number> = {};
+    // blocked tasks
+    supabase
+      .from("tasks")
+      .select("task_id", { count: "exact", head: true })
+      .eq("account_id", accountId)
+      .eq("status", "Blocked"),
 
-    if (!tasksDetailRes.error) {
-      const rows = (tasksDetailRes.data || []) as any[];
-      for (const t of rows) {
-        const st = String(t.status || "New");
-        tasksByStatus[st] = (tasksByStatus[st] || 0) + 1;
+    // meetings booked
+    supabase
+      .from("meetings")
+      .select("id", { count: "exact", head: true })
+      .eq("account_id", accountId),
 
-        const due = t.due_at ? new Date(String(t.due_at)) : null;
-        const done = st.toLowerCase() === "done";
-        if (due && !done && due.getTime() < now.getTime()) overdueTasks += 1;
-        if (st.toLowerCase() === "blocked") blockedTasks += 1;
-      }
-    }
+    // projects
+    supabase
+      .from("projects")
+      .select("id,status", { count: "exact" })
+      .eq("account_id", accountId),
 
-    // Revenue trend (last 6 months)
-    const months: string[] = [];
-    const start = startOfMonthUTC(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1)));
-    for (let i = 0; i < 6; i++) {
-      const d = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i, 1));
-      months.push(monthKey(d));
-    }
+    // opportunities (for open pipeline)
+    supabase
+      .from("opportunities")
+      .select("id, amount, stage", { count: "exact" })
+      .eq("account_id", accountId),
 
-    const revRes = await svc
+    // revenue entries for trend (created_at based)
+    supabase
       .from("revenue_entries")
       .select("amount, created_at")
-      .eq("account_id", accountId)
-      .gte("created_at", start.toISOString());
+      .eq("account_id", accountId),
+  ]);
 
-    const revenueByMonth: Record<string, number> = {};
-    for (const m of months) revenueByMonth[m] = 0;
+  if (tasksRes.error) return NextResponse.json({ error: tasksRes.error.message }, { status: 500 });
+  if (blockedRes.error) return NextResponse.json({ error: blockedRes.error.message }, { status: 500 });
+  if (meetingsRes.error) return NextResponse.json({ error: meetingsRes.error.message }, { status: 500 });
+  if (projectsRes.error) return NextResponse.json({ error: projectsRes.error.message }, { status: 500 });
+  if (oppRes.error) return NextResponse.json({ error: oppRes.error.message }, { status: 500 });
+  if (revenueRes.error) return NextResponse.json({ error: revenueRes.error.message }, { status: 500 });
 
-    if (!revRes.error) {
-      const rows = (revRes.data || []) as any[];
-      for (const r of rows) {
-        const created = r.created_at ? new Date(String(r.created_at)) : null;
-        if (!created) continue;
-        const key = monthKey(created);
-        if (key in revenueByMonth) revenueByMonth[key] += Number(r.amount) || 0;
-      }
-    }
+  const overdueTasks = tasksRes.count ?? 0;
+  const blockedTasks = blockedRes.count ?? 0;
+  const meetingsBooked = meetingsRes.count ?? 0;
 
-    const revenueTrend = months.map((m) => ({ month: m, amount: revenueByMonth[m] || 0 }));
+  const projectsRows = (projectsRes.data || []) as Array<{ id: string; status: string | null }>;
+  const totalProjects = projectsRes.count ?? projectsRows.length ?? 0;
+  const activeProjects = projectsRows.filter((p) => {
+    const s = String(p.status || "").toLowerCase();
+    return !["done", "closed", "completed", "cancelled"].includes(s);
+  }).length;
 
-    return NextResponse.json({
-      accountId,
-      generatedAt: nowIso,
+  const oppRows = (oppRes.data || []) as Array<{ id: string; amount: number | null; stage: string | null }>;
+  const openOpp = oppRows.filter((o) => {
+    const s = String(o.stage || "").toLowerCase();
+    return s !== "won" && s !== "lost";
+  });
+  const openOppCount = openOpp.length;
+  const openPipeline = openOpp.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+
+  // Pipeline by stage (top 6)
+  const byStageMap: Record<string, { count: number; amount: number }> = {};
+  for (const o of oppRows) {
+    const stage = (String(o.stage || "Unknown").trim() || "Unknown");
+    const amt = Number(o.amount || 0) || 0;
+    if (!byStageMap[stage]) byStageMap[stage] = { count: 0, amount: 0 };
+    byStageMap[stage].count += 1;
+    byStageMap[stage].amount += amt;
+  }
+  const pipelineByStage = Object.entries(byStageMap)
+    .map(([stage, v]) => ({ stage, count: v.count, amount: v.amount }))
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 6);
+
+  // Revenue Trend (last 6 months, created_at based)
+  const now = new Date();
+  const thisMonth = startOfMonth(now);
+  const start = addMonths(thisMonth, -5); // includes this month + 5 back
+  const buckets: Record<string, number> = {};
+  for (let i = 0; i < 6; i++) {
+    const k = monthKey(addMonths(start, i));
+    buckets[k] = 0;
+  }
+
+  const revRows = (revenueRes.data || []) as Array<{ amount: number | null; created_at: string | null }>;
+  for (const r of revRows) {
+    if (!r.created_at) continue;
+    const dt = new Date(r.created_at);
+    if (dt < start) continue;
+    const k = monthKey(startOfMonth(dt));
+    if (!(k in buckets)) continue;
+    buckets[k] += Number(r.amount || 0) || 0;
+  }
+
+  const revenueTrend = Object.keys(buckets)
+    .sort()
+    .map((k) => ({ month: monthLabelFromKey(k), amount: buckets[k] }));
+
+  return NextResponse.json(
+    {
+      generatedAt: new Date().toISOString(),
       kpis: {
-        totalUsers,
-        totalTasks,
         overdueTasks,
         blockedTasks,
         meetingsBooked,
@@ -194,11 +167,8 @@ export async function GET() {
         openPipeline,
       },
       pipelineByStage,
-      topDeals,
-      tasksByStatus,
       revenueTrend,
-    });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Unknown error" }, { status: 500 });
-  }
+    },
+    { status: 200 }
+  );
 }

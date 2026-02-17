@@ -59,7 +59,7 @@ export default function Topbar() {
   }
 
   return (
-    <header className="fixed inset-x-0 top-0 z-[999] border-b border-black/10 bg-white/80 backdrop-blur-md shadow-sm">
+    <header className="fixed inset-x-0 top-0 z-[999] border-b border-black/10 bg-white/70 backdrop-blur-xl">
       <div className="mx-auto relative flex h-24 max-w-7xl items-center px-6">
         <div className="min-w-[220px]" />
 
@@ -85,15 +85,11 @@ export default function Topbar() {
             <div className="text-xs text-gray-600">{viewer.email || ""}</div>
           </div>
 
-          <div className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-white text-sm font-semibold text-gray-900">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 bg-white/85 text-sm font-semibold text-gray-900 shadow-sm">
             {initials}
           </div>
 
-          <button
-            onClick={handleLogout}
-            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50"
-            type="button"
-          >
+          <button onClick={handleLogout} className="fw-btn text-sm" type="button">
             Logout
           </button>
         </div>
