@@ -103,7 +103,9 @@ export default function CeoOverview() {
           />
         </Link>
 
-        <KpiCard title="Meetings Booked" value={data ? String(data.kpis.meetingsBooked) : "—"} sub="Freshware meetings" />
+<Link href="/dashboard/meetings" className="block">
+  <KpiCard title="Meetings Booked" value={data ? String(data.kpis.meetingsBooked) : "—"} sub="Freshware meetings" />
+</Link>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
