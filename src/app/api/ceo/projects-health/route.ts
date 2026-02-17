@@ -1,103 +1,79 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
-import { createClient } from "@supabase/supabase-js";
+import { requireViewer } from "@/lib/supabase/route";
 
 export const runtime = "nodejs";
-
-type ProfileRow = { id: string; role: string | null; account_id: string | null };
 
 function isStaff(role: string | null | undefined) {
   const r = (role || "").toUpperCase();
   return ["CEO", "ADMIN", "STAFF", "OPS", "SALES", "MARKETING"].includes(r);
 }
 
-function svcSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
-  return createClient(url, key, { auth: { persistSession: false } });
+function computeHealth(p: {
+  due_date?: string | null;
+  start_date?: string | null;
+  status?: string | null;
+  health?: string | null;
+}) {
+  // Respect explicit health if set
+  const explicit = (p.health || "").toUpperCase().trim();
+  if (explicit === "RED" || explicit === "YELLOW" || explicit === "GREEN") return explicit;
+
+  // Basic algorithm if not explicitly set:
+  // - If overdue => RED
+  // - If due within 7 days and not Done/Closed => YELLOW
+  // - Else GREEN (if dates exist), otherwise UNKNOWN
+  const status = (p.status || "").toLowerCase();
+  const doneLike = status.includes("done") || status.includes("complete") || status.includes("closed");
+
+  if (!p.due_date) return "UNKNOWN";
+
+  const due = new Date(p.due_date);
+  if (isNaN(due.getTime())) return "UNKNOWN";
+
+  const now = new Date();
+  const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (!doneLike && diffDays < 0) return "RED";
+  if (!doneLike && diffDays <= 7) return "YELLOW";
+  return "GREEN";
 }
 
-async function getViewer() {
-  const cookieStore = await cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll: () => cookieStore.getAll() } }
-  );
-
-  const { data: auth } = await supabase.auth.getUser();
-  if (!auth.user) return { ok: false as const, reason: "Not authenticated" };
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, role, account_id")
-    .eq("id", auth.user.id)
-    .maybeSingle();
-
-  if (!profile) return { ok: false as const, reason: "Missing profile row" };
-  return { ok: true as const, profile: profile as ProfileRow };
-}
-
-export async function GET(req: Request) {
+export async function GET() {
   try {
-    const viewer = await getViewer();
-    if (!viewer.ok) return NextResponse.json({ error: viewer.reason }, { status: 401 });
+    const { supabase, user, profile } = await requireViewer();
 
-    const { profile } = viewer;
-    if (!profile.account_id) return NextResponse.json({ error: "Missing profiles.account_id" }, { status: 400 });
-    if (!isStaff(profile.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-    const svc = svcSupabase();
-    if (!svc) return NextResponse.json({ error: "Missing SUPABASE_SERVICE_ROLE_KEY" }, { status: 500 });
-
-    const accountId = profile.account_id;
-    const url = new URL(req.url);
-    const healthFilter = (url.searchParams.get("health") || "").trim();
-
-    const projRes = await svc
-      .from("projects")
-      .select("id, name, status, health, due_date, start_date")
-      .eq("account_id", accountId);
-
-    if (projRes.error) return NextResponse.json({ error: projRes.error.message }, { status: 500 });
-
-    const rows = (projRes.data || []) as any[];
-
-    const active = rows.filter((r) => {
-      const s = String(r.status || "").toLowerCase();
-      return !["done", "closed", "completed", "cancelled"].includes(s);
-    });
-
-    const map: Record<string, number> = {};
-    for (const p of active) {
-      const h = String(p.health || "Unknown");
-      map[h] = (map[h] || 0) + 1;
+    if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    if (!profile || profile.role === "PENDING") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (!isStaff(profile.role)) {
+      return NextResponse.json({ error: "Staff only" }, { status: 403 });
     }
 
-    const buckets = Object.entries(map)
-      .map(([health, count]) => ({ health, count }))
-      .sort((a, b) => b.count - a.count);
+    const accountId = profile.account_id;
+    if (!accountId) return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
 
-    const filtered = healthFilter ? active.filter((p) => String(p.health || "Unknown") === healthFilter) : active;
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id, name, status, stage, start_date, due_date, health, created_at")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false });
 
-    const projects = filtered.map((p) => ({
-      id: p.id,
-      name: p.name || "Untitled project",
-      status: p.status || null,
-      health: p.health || "Unknown",
-      start_date: p.start_date || null,
-      due_date: p.due_date || null,
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    const projects = (data || []).map((p: any) => ({
+      ...p,
+      computed_health: computeHealth(p),
     }));
 
-    return NextResponse.json({
-      healthFilter: healthFilter || null,
-      buckets,
-      activeCount: active.length,
-      projects,
-    });
+    const counts = { GREEN: 0, YELLOW: 0, RED: 0, UNKNOWN: 0 } as Record<string, number>;
+    for (const p of projects as any[]) {
+      const h = String(p.computed_health || "UNKNOWN").toUpperCase();
+      counts[h] = (counts[h] || 0) + 1;
+    }
+
+    return NextResponse.json({ counts, projects }, { status: 200 });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Unknown error" }, { status: 500 });
+    return NextResponse.json({ error: e?.message || "Server error" }, { status: 500 });
   }
 }

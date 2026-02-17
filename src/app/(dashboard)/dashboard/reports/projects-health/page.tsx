@@ -1,101 +1,127 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import ApiProbe from "@/components/dashboard/ApiProbe";
 
-export const runtime = "nodejs";
+type HealthCounts = { GREEN: number; YELLOW: number; RED: number; UNKNOWN: number };
 
-async function getData(health?: string) {
-  const url = health
-    ? `http://localhost:3000/api/ceo/projects-health?health=${encodeURIComponent(health)}`
-    : `http://localhost:3000/api/ceo/projects-health`;
+type ProjectHealthRow = {
+  id: string;
+  name: string | null;
+  status: string | null;
+  stage: string | null;
+  start_date: string | null;
+  due_date: string | null;
+  computed_health: string;
+};
 
-  const res = await fetch(url, { cache: "no-store" }).catch(() => null);
-  if (!res) return { error: "Unable to reach projects health API" };
-  const ct = res.headers.get("content-type") || "";
-  if (!ct.includes("application/json")) return { error: "Non-JSON response from projects health API" };
-  return res.json();
+type ProjectsHealthResponse = {
+  counts: HealthCounts;
+  projects: ProjectHealthRow[];
+};
+
+async function fetchJson(url: string) {
+  const res = await fetch(url, {
+    cache: "no-store",
+    credentials: "include",
+    redirect: "manual",
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+  return json;
 }
 
-function fmtDate(iso: string | null) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
+function fmtDate(s: string | null | undefined) {
+  if (!s) return "N/A";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return "N/A";
   return d.toLocaleDateString();
 }
 
-export default async function ProjectHealthPage({ searchParams }: { searchParams: Promise<{ health?: string }> }) {
-  const sp = await searchParams;
-  const health = sp?.health || "";
-  const data: any = await getData(health || undefined);
+export default function ProjectsHealthReportPage() {
+  const [data, setData] = useState<ProjectsHealthResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  if (data?.error) return <div className="rounded-3xl border bg-white p-6 shadow-sm">{data.error}</div>;
+  async function load() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const json = (await fetchJson("/api/ceo/projects-health")) as ProjectsHealthResponse;
+      setData(json);
+    } catch (e: any) {
+      setErr(e?.message || "Unable to reach projects health API");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const sorted = useMemo(() => {
+    const rows = data?.projects || [];
+    const weight: Record<string, number> = { RED: 0, YELLOW: 1, GREEN: 2, UNKNOWN: 3 };
+    return [...rows].sort((a, b) => (weight[a.computed_health] ?? 9) - (weight[b.computed_health] ?? 9));
+  }, [data]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-2xl font-semibold text-gray-900">Project Health Heatmap</div>
-          <div className="mt-1 text-sm text-gray-600">
-            Active projects: <span className="font-semibold">{data.activeCount}</span>
-          </div>
-          {data.healthFilter ? (
-            <div className="mt-1 text-sm text-gray-600">
-              Filter: <span className="font-semibold">{data.healthFilter}</span>
+    <div className="space-y-5">
+      <div className="rounded-2xl border bg-background p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-xs text-muted-foreground">Reports</div>
+            <div className="text-xl font-semibold">Project Health Heatmap</div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              Source: <span className="font-medium">/api/ceo/projects-health</span>
             </div>
-          ) : null}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Link href="/dashboard" className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+              Back to Dashboard
+            </Link>
+            <button
+              onClick={load}
+              disabled={busy}
+              className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+            >
+              {busy ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
         </div>
 
-        <div className="flex gap-2">
-          <Link href="/dashboard/reports/projects-health" className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
-            Clear Filter
-          </Link>
-          <Link href="/dashboard" className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
-            Back
-          </Link>
-        </div>
+        {err ? (
+          <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {err}
+          </div>
+        ) : null}
       </div>
 
-      <section className="rounded-3xl border bg-white p-6 shadow-sm">
-        <div className="text-sm font-semibold text-gray-900">Health Buckets</div>
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {(data.buckets || []).map((b: any) => (
-            <Link
-              key={b.health}
-              href={`/dashboard/reports/projects-health?health=${encodeURIComponent(b.health)}`}
-              className="rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition"
-            >
-              <div className="text-base font-semibold text-gray-900">{b.health}</div>
-              <div className="mt-2 text-3xl font-semibold text-gray-900">{b.count}</div>
-              <div className="mt-1 text-sm text-gray-600">active projects</div>
-            </Link>
-          ))}
-        </div>
-      </section>
+      <ApiProbe paths={["/api/ceo/projects-health"]} />
 
-      <section className="rounded-3xl border bg-white p-6 shadow-sm">
-        <div className="text-sm font-semibold text-gray-900">Projects</div>
-        <div className="mt-4 space-y-2">
-          {(data.projects || []).length ? (
-            data.projects.slice(0, 50).map((p: any) => (
-              <div key={p.id} className="rounded-2xl border p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-gray-900">{p.name}</div>
-                    <div className="mt-1 text-xs text-gray-600">
-                      Health: <span className="font-semibold">{p.health}</span> · Status:{" "}
-                      <span className="font-semibold">{p.status || "—"}</span>
-                    </div>
-                    <div className="mt-1 text-xs text-gray-600">
-                      Start: <span className="font-semibold">{fmtDate(p.start_date)}</span> · Due:{" "}
-                      <span className="font-semibold">{fmtDate(p.due_date)}</span>
-                    </div>
+      <div className="rounded-2xl border bg-background p-5">
+        <div className="text-sm font-semibold">Projects</div>
+        <div className="mt-3 space-y-2">
+          {sorted.map((p) => (
+            <div key={p.id} className="rounded-2xl border p-4">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-sm font-semibold">{p.name || p.id}</div>
+                  <div className="text-xs text-muted-foreground">
+                    Stage: {p.stage || "N/A"} | Status: {p.status || "N/A"} | Start: {fmtDate(p.start_date)} | Due:{" "}
+                    {fmtDate(p.due_date)}
                   </div>
                 </div>
+                <div className="text-sm font-semibold">{p.computed_health}</div>
               </div>
-            ))
-          ) : (
-            <div className="text-sm text-gray-600">No projects found for this filter.</div>
-          )}
+            </div>
+          ))}
+          {!sorted.length && !busy ? <div className="text-sm text-muted-foreground">No projects found.</div> : null}
         </div>
-      </section>
+      </div>
     </div>
   );
 }
