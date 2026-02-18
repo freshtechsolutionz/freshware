@@ -3,100 +3,29 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { supabaseBrowser } from "@/lib/supabase/browser";
 
-const supabase = supabaseBrowser();
-
-type ProfileRow = {
+type UserRow = {
   id: string;
   full_name: string | null;
-  role: string;
+  role: string | null;
   account_id: string | null;
-  created_at: string | null;
+  avatar_url: string | null;
+  created_at: string;
+  email: string | null; // comes from API (auth.users)
 };
 
-type AccountRow = {
-  id: string;
-  name: string | null;
-};
-
-const ROLE_OPTIONS = [
-  "PENDING",
-  "CLIENT_USER",
-  "CLIENT_ADMIN",
-  "STAFF",
-  "SALES",
-  "OPS",
-  "MARKETING",
-  "ADMIN",
-  "CEO",
-];
+function normalize(s: string) {
+  return (s || "").trim().toLowerCase();
+}
 
 export default function AdminUsersPage() {
   const router = useRouter();
 
+  const [rows, setRows] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [meRole, setMeRole] = useState<string>("");
-
-  const [profiles, setProfiles] = useState<ProfileRow[]>([]);
-  const [accounts, setAccounts] = useState<AccountRow[]>([]);
-  const [search, setSearch] = useState("");
-
-  const [workingId, setWorkingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  async function load() {
-    setLoading(true);
-    setErrorMsg(null);
-
-    const { data: auth } = await supabase.auth.getUser();
-    const userId = auth.user?.id ?? null;
-
-    if (!userId) {
-      router.replace("/login");
-      return;
-    }
-
-    const { data: me } = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
-    const roleUpper = String(me?.role || "").toUpperCase();
-    setMeRole(roleUpper);
-
-    if (!(roleUpper === "CEO" || roleUpper === "ADMIN")) {
-      setProfiles([]);
-      setAccounts([]);
-      setLoading(false);
-      setErrorMsg("Not authorized. Only CEO/Admin can manage users.");
-      return;
-    }
-
-    const profRes = await supabase
-      .from("profiles")
-      .select("id, full_name, role, account_id, created_at")
-      .order("created_at", { ascending: true });
-
-    if (profRes.error) {
-      setErrorMsg(profRes.error.message);
-      setLoading(false);
-      return;
-    }
-
-    const acctRes = await supabase.from("accounts").select("id,name").order("name", { ascending: true });
-
-    // accounts table may exist; if it errors, we still allow manual account_id editing later
-    if (!acctRes.error) setAccounts((acctRes.data as any) || []);
-    else setAccounts([]);
-
-    setProfiles((profRes.data as any) || []);
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    load();
-    const { data: sub } = supabase.auth.onAuthStateChange(() => load());
-    return () => sub.subscription.unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (!toast) return;
@@ -104,208 +33,250 @@ export default function AdminUsersPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return profiles.filter((p) => {
-      if (!q) return true;
-      const hay = `${p.full_name || ""} ${p.role || ""} ${p.id} ${p.account_id || ""}`.toLowerCase();
-      return hay.includes(q);
-    });
-  }, [profiles, search]);
+  async function syncEmails() {
+  setError(null);
+  try {
+    const res = await fetch("/api/admin/sync-profile-emails", { method: "POST" });
+    const text = await res.text();
 
-  async function updateProfile(id: string, patch: Partial<ProfileRow>) {
-    setWorkingId(id);
-    setErrorMsg(null);
-
-    const { error } = await supabase.from("profiles").update(patch).eq("id", id);
-
-    setWorkingId(null);
-
-    if (error) {
-      setErrorMsg(error.message);
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      setError(`Non-JSON response: ${text.slice(0, 120)}`);
       return;
     }
 
-    setToast("Saved");
-    await load();
+    if (!res.ok) {
+      setError(json?.error || "Failed to sync emails.");
+      return;
+    }
+
+    setToast(`Email sync complete — updated ${json.updated}, missing auth ${json.missing_auth}`);
+    await load(); // refresh list
+  } catch (e: any) {
+    setError(e?.message || "Failed to sync emails.");
+  }
+}
+
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/admin/list-users", { method: "GET" });
+      const text = await res.text();
+
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        setLoading(false);
+        setError(`Non-JSON response: ${text.slice(0, 120)}`);
+        return;
+      }
+
+      if (!res.ok) {
+        // If not signed in, push to portal
+        if (res.status === 401) {
+          router.replace("/portal?next=/admin/users");
+          return;
+        }
+        setLoading(false);
+        setError(json?.error || "Failed to load users.");
+        return;
+      }
+
+      setRows((json?.users as UserRow[]) ?? []);
+      setLoading(false);
+    } catch (e: any) {
+      setLoading(false);
+      setError(e?.message || "Failed to load users.");
+    }
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white">
-        <header className="mx-auto max-w-6xl px-6 py-6 flex items-center justify-between">
-          <div>
-            <div className="text-xl font-semibold text-gray-900">User Manager</div>
-            <div className="mt-1 text-sm text-gray-600">Loading...</div>
-          </div>
-          <div className="flex gap-2">
-            <Link href="/admin" className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50">
-              Back to Admin
-            </Link>
-          </div>
-        </header>
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-        <main className="mx-auto max-w-6xl px-6 pb-16">
-          <div className="rounded-3xl border bg-white p-6 shadow-sm">
-            <div className="h-6 w-56 rounded bg-gray-200 animate-pulse" />
-            <div className="mt-4 h-10 w-full rounded-2xl bg-gray-200 animate-pulse" />
-            <div className="mt-4 h-10 w-full rounded-2xl bg-gray-200 animate-pulse" />
-          </div>
-        </main>
-      </div>
-    );
+  const filtered = useMemo(() => {
+    const q = normalize(query);
+    if (!q) return rows;
+    return rows.filter((r) => {
+      const hay = normalize(`${r.full_name ?? ""} ${r.role ?? ""} ${r.email ?? ""} ${r.id ?? ""}`);
+      return hay.includes(q);
+    });
+  }, [rows, query]);
+
+  async function sendReset(email: string | null) {
+    const clean = (email || "").trim().toLowerCase();
+    if (!clean) {
+      setError("This user is missing email (Auth record not found).");
+      return;
+    }
+
+    setError(null);
+
+    try {
+      const res = await fetch("/api/admin/send-password-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: clean }),
+      });
+
+      const text = await res.text();
+      let json: any = null;
+
+      try {
+        json = JSON.parse(text);
+      } catch {
+        setError(`Non-JSON response: ${text.slice(0, 120)}`);
+        return;
+      }
+
+      if (!res.ok) {
+        setError(json?.error || "Failed to send reset.");
+        return;
+      }
+
+      setToast(`Reset email sent to ${clean}`);
+    } catch (e: any) {
+      setError(e?.message || "Failed to send reset.");
+    }
   }
-
-  const isAdmin = meRole === "CEO" || meRole === "ADMIN";
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white">
       <header className="mx-auto max-w-6xl px-6 py-6 flex items-center justify-between">
         <div>
-          <div className="text-xl font-semibold text-gray-900">User Manager</div>
-          <div className="mt-1 text-sm text-gray-600">Edit users, roles, and account assignments.</div>
+          <div className="text-xl font-semibold text-gray-900">Users</div>
+          <div className="mt-1 text-sm text-gray-600">Manage users and send password reset links.</div>
         </div>
-        <div className="flex gap-2">
-          <Link href="/admin" className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50">
+
+        <div className="flex items-center gap-3">
+          <Link
+            href="/admin"
+            className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+          >
             Back to Admin
           </Link>
-          <Link href="/dashboard" className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50">
+          <Link
+            href="/dashboard"
+            className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+          >
             Dashboard
           </Link>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 pb-16 space-y-4">
+      <main className="mx-auto max-w-6xl px-6 pb-16">
         {toast ? (
-          <div className="rounded-2xl border bg-white p-3 text-sm font-semibold text-gray-900 shadow-sm">
+          <div className="mb-4 rounded-2xl border bg-white p-3 text-sm font-semibold text-gray-900 shadow-sm">
             {toast}
           </div>
         ) : null}
 
-        {errorMsg ? (
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {errorMsg}
-          </div>
+        {error ? (
+          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
         ) : null}
 
-        {!isAdmin ? (
-          <div className="rounded-3xl border bg-white p-8 shadow-sm">
-            <div className="text-lg font-semibold text-gray-900">Not authorized</div>
-            <div className="mt-2 text-sm text-gray-600">Only CEO/Admin can manage users.</div>
-          </div>
-        ) : (
-          <section className="rounded-3xl border bg-white p-6 shadow-sm">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-              <div className="text-sm text-gray-600">
-                Total users: <span className="font-semibold text-gray-900">{profiles.length}</span>
-              </div>
-
-              <div className="w-full lg:w-[420px]">
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by name, role, user id, account id"
-                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10"
-                />
-              </div>
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <div className="text-lg font-semibold text-gray-900">Directory</div>
+              <div className="mt-1 text-sm text-gray-600">Users in your account.</div>
             </div>
 
-            <div className="mt-6 grid grid-cols-1 gap-3">
-              {filtered.map((p) => (
-                <div key={p.id} className="rounded-3xl border bg-white p-5">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="text-base font-semibold text-gray-900">{p.full_name || "Unnamed"}</div>
-                      <div className="mt-1 text-xs text-gray-500 font-mono break-all">{p.id}</div>
-                      <div className="mt-2 text-sm text-gray-700">
-                        Role: <span className="font-semibold">{p.role}</span>
-                      </div>
-                      <div className="mt-1 text-sm text-gray-700">
-                        Account: <span className="font-mono">{p.account_id || "None"}</span>
-                      </div>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search name, role, email, id"
+                className="w-full md:w-[360px] rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10"
+              />
+              <button
+                onClick={load}
+                className="rounded-2xl px-4 py-3 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+                type="button"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-6 divide-y divide-black/10">
+            {loading ? (
+              <div className="p-4 text-sm text-gray-600">Loading...</div>
+            ) : filtered.length === 0 ? (
+              <div className="p-4 text-sm text-gray-600">No users found.</div>
+            ) : (
+              filtered.map((u) => (
+                <div key={u.id} className="p-4 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="h-10 w-10 overflow-hidden rounded-full border border-black/10 bg-white flex items-center justify-center text-xs font-semibold text-gray-800">
+                      {u.avatar_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={u.avatar_url} alt="Avatar" className="h-full w-full object-cover" />
+                      ) : (
+                        (u.full_name || "?").slice(0, 2).toUpperCase()
+                      )}
                     </div>
 
-                    <div className="w-full lg:w-[360px] space-y-3">
-                      <label className="block">
-                        <div className="text-xs font-semibold text-gray-700">Full name</div>
-                        <input
-                          defaultValue={p.full_name || ""}
-                          className="mt-2 w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10"
-                          onBlur={(e) => {
-                            const next = e.target.value.trim();
-                            if (next === (p.full_name || "")) return;
-                            updateProfile(p.id, { full_name: next || null });
-                          }}
-                        />
-                      </label>
-
-                      <label className="block">
-                        <div className="text-xs font-semibold text-gray-700">Role</div>
-                        <select
-                          defaultValue={p.role}
-                          className="mt-2 w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10 bg-white"
-                          onChange={(e) => updateProfile(p.id, { role: e.target.value })}
-                          disabled={workingId === p.id}
-                        >
-                          {ROLE_OPTIONS.map((r) => (
-                            <option key={r} value={r}>
-                              {r}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="block">
-                        <div className="text-xs font-semibold text-gray-700">Account assignment</div>
-
-                        {accounts.length ? (
-                          <select
-                            defaultValue={p.account_id || ""}
-                            className="mt-2 w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10 bg-white"
-                            onChange={(e) => updateProfile(p.id, { account_id: e.target.value || null })}
-                            disabled={workingId === p.id}
-                          >
-                            <option value="">None</option>
-                            {accounts.map((a) => (
-                              <option key={a.id} value={a.id}>
-                                {a.name || a.id}
-                              </option>
-                            ))}
-                          </select>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-gray-900 truncate">{u.full_name || "—"}</div>
+                      <div className="mt-1 text-xs text-gray-600 break-all">
+                        {u.email ? (
+                          <>
+                            <span className="font-semibold text-gray-900">{u.email}</span>{" "}
+                            <span className="text-gray-400">•</span>{" "}
+                          </>
                         ) : (
-                          <input
-                            defaultValue={p.account_id || ""}
-                            placeholder="Paste accounts.id UUID"
-                            className="mt-2 w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-black/10 font-mono"
-                            onBlur={(e) => {
-                              const next = e.target.value.trim();
-                              if (next === (p.account_id || "")) return;
-                              updateProfile(p.id, { account_id: next || null });
-                            }}
-                          />
+                          <>
+                            <span className="text-red-700 font-semibold">No email found</span>{" "}
+                            <span className="text-gray-400">•</span>{" "}
+                          </>
                         )}
-
-                        <div className="mt-2 text-xs text-gray-500">
-                          Choose the company account this user belongs to. Tasks, projects, and opportunities will scope to this.
-                        </div>
-                      </label>
-
-                      <div className="text-xs text-gray-500">
-                        {workingId === p.id ? "Saving..." : "Changes save on selection or when you click off the input."}
+                        Role: <span className="font-semibold text-gray-900">{u.role || "—"}</span>{" "}
+                        <span className="text-gray-400">•</span> ID: <span className="font-mono">{u.id}</span>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
 
-              {filtered.length === 0 ? (
-                <div className="rounded-2xl border bg-gray-50 p-6 text-sm text-gray-600">
-                  No users found.
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/dashboard/people/${u.id}`}
+                      className="rounded-2xl px-3 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+                    >
+                      View
+                    </Link>
+
+                    <button
+                      onClick={() => sendReset(u.email)}
+                      className="rounded-2xl px-3 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+                      type="button"
+                    >
+                      Send reset
+                    </button>
+                    <button
+  onClick={syncEmails}
+  className="rounded-2xl px-4 py-3 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+  type="button"
+>
+  Sync emails
+</button>
+
+                  </div>
                 </div>
-              ) : null}
-            </div>
-          </section>
-        )}
+              ))
+            )}
+          </div>
+
+          <div className="mt-6 text-xs text-gray-500">
+            Emails are pulled from Supabase Auth server-side (service role) and never exposed to non-admin users.
+          </div>
+        </section>
       </main>
     </div>
   );

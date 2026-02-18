@@ -63,9 +63,7 @@ export default function AdminAccessRequestsPage() {
   const [rows, setRows] = useState<AccessRequest[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<
-    "new" | "approved" | "denied" | "all"
-  >("new");
+  const [activeTab, setActiveTab] = useState<"new" | "approved" | "denied" | "all">("new");
   const [query, setQuery] = useState("");
 
   const [workingId, setWorkingId] = useState<string | null>(null);
@@ -80,8 +78,7 @@ export default function AdminAccessRequestsPage() {
   // If baseRole === STAFF, pick department role (defaults to STAFF)
   const [deptRole, setDeptRole] = useState<DeptRole>("STAFF");
 
-  const [assignAccountId, setAssignAccountId] =
-    useState<string>(DEFAULT_ACCOUNT_ID);
+  const [assignAccountId, setAssignAccountId] = useState<string>(DEFAULT_ACCOUNT_ID);
   const [approvedNow, setApprovedNow] = useState(false);
 
   const finalRole: string = useMemo(() => {
@@ -97,7 +94,7 @@ export default function AdminAccessRequestsPage() {
     const userId = auth.user?.id ?? null;
 
     if (!userId) {
-      router.replace("/login");
+      router.replace("/portal");
       return;
     }
 
@@ -128,9 +125,7 @@ export default function AdminAccessRequestsPage() {
 
     const { data, error } = await supabase
       .from("access_requests")
-      .select(
-        "id, created_at, full_name, email, company, reason, status, reviewed_by, reviewed_at"
-      )
+      .select("id, created_at, full_name, email, company, reason, status, reviewed_by, reviewed_at")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -175,8 +170,7 @@ export default function AdminAccessRequestsPage() {
       const s = normalizeStatus(r.status);
       if (activeTab !== "all" && s !== activeTab) return false;
       if (!q) return true;
-      const hay =
-        `${r.full_name} ${r.email} ${r.company ?? ""} ${r.reason ?? ""}`.toLowerCase();
+      const hay = `${r.full_name} ${r.email} ${r.company ?? ""} ${r.reason ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [rows, activeTab, query]);
@@ -256,16 +250,15 @@ export default function AdminAccessRequestsPage() {
       });
 
       const text = await res.text();
-let json: any = null;
+      let json: any = null;
 
-try {
-  json = JSON.parse(text);
-} catch {
-  setWorkingId(null);
-  setErrorMsg(`Approve route returned non-JSON. First 120 chars: ${text.slice(0, 120)}`);
-  return;
-}
-
+      try {
+        json = JSON.parse(text);
+      } catch {
+        setWorkingId(null);
+        setErrorMsg(`Approve route returned non-JSON. First 120 chars: ${text.slice(0, 120)}`);
+        return;
+      }
 
       if (!res.ok) {
         setWorkingId(null);
@@ -283,13 +276,40 @@ try {
     }
   }
 
+  // ✅ NEW: send real invite email via Supabase admin API route
+  async function sendInviteEmail(email: string) {
+    setErrorMsg(null);
+    setToast(null);
+
+    try {
+      const res = await fetch("/api/admin/send-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to send invite email.");
+      }
+
+      setToast("Invite email sent");
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Failed to send invite email.");
+    }
+  }
+
   function copyInviteEmail(email: string) {
     const text =
       `Subject: Freshware Portal Access\n\n` +
       `You have been approved for access to the Freshware portal.\n\n` +
       `Portal entry: https://freshware.freshtechsolutionz.com/\n` +
       `Email: ${email}\n\n` +
-      `If you need to set your password, enter your email on the portal entry page and click "Forgot password".\n`;
+      `To set your password:\n` +
+      `- Go to the portal\n` +
+      `- Click "Forgot password / Set password"\n` +
+      `- Follow the email link to /portal/setup\n`;
 
     navigator.clipboard.writeText(text);
     setToast("Invite email copied");
@@ -312,14 +332,13 @@ try {
       `Assignments:\n` +
       `- role = ${finalRole}\n` +
       `- account_id = ${accountId ? accountId : "(PASTE_ACCOUNT_ID)"}\n\n` +
-      `Auto-approval is enabled.\n` +
       `When you click "Approve + Create User", Freshware will:\n` +
       `- Create the Auth user (if missing)\n` +
       `- Upsert the profiles row with role + account_id\n` +
       `- Mark the request approved\n\n` +
       `After approval:\n` +
-      `- Send the invite email\n` +
-      `- User sets password via "Forgot password"\n`;
+      `- Click "Send invite email" (preferred)\n` +
+      `- Or user can use "Forgot password / Set password" on the portal\n`;
 
     navigator.clipboard.writeText(text);
     setToast("Setup steps copied");
@@ -352,9 +371,7 @@ try {
       <header className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="text-xl font-semibold text-gray-900">Access Requests</div>
-          <div className="mt-1 text-sm text-gray-600">
-            Review invite-only requests and approve or deny access.
-          </div>
+          <div className="mt-1 text-sm text-gray-600">Review invite-only requests and approve or deny access.</div>
         </div>
         <div className="flex items-center gap-3">
           <Link
@@ -381,9 +398,7 @@ try {
       {!isAdmin ? (
         <div className="rounded-3xl border bg-white p-8 shadow-sm">
           <div className="text-lg font-semibold text-gray-900">Not authorized</div>
-          <div className="mt-2 text-sm text-gray-600">
-            You do not have permission to view access requests.
-          </div>
+          <div className="mt-2 text-sm text-gray-600">You do not have permission to view access requests.</div>
         </div>
       ) : (
         <section className="rounded-3xl border bg-white p-6 shadow-sm">
@@ -469,11 +484,19 @@ try {
                           <div className="text-xs font-semibold text-gray-700">Next step</div>
                           <div className="mt-1">
                             {normalizeStatus(r.status) === "approved"
-                              ? "Approved in system. Send invite email if needed."
+                              ? "Approved in system. Send invite email to let them set a password."
                               : "No further action required."}
                           </div>
                         </div>
                       )}
+
+                      {/* ✅ NEW: real invite email */}
+                      <button
+                        onClick={() => sendInviteEmail(r.email)}
+                        className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
+                      >
+                        Send invite email
+                      </button>
 
                       <button
                         onClick={() => copyInviteEmail(r.email)}
@@ -616,17 +639,18 @@ try {
                       Copy steps
                     </button>
 
+                    {/* ✅ NEW: send real invite from panel too */}
                     <button
-                      onClick={() => copyInviteEmail(selected.email)}
+                      onClick={() => sendInviteEmail(selected.email)}
                       className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
                     >
-                      Copy invite email
+                      Send invite email
                     </button>
                   </div>
 
                   {approvedNow ? (
                     <div className="mt-4 rounded-2xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-                      Approved and user was provisioned. Next: send invite email (copy button above).
+                      Approved and user was provisioned. Next: click “Send invite email”.
                     </div>
                   ) : (
                     <div className="mt-4 rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">

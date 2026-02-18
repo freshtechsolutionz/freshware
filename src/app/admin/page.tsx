@@ -140,11 +140,10 @@ export default function AdminHomePage() {
               href="/admin/access-requests"
             />
             <AdminTile
-              title="Users and Roles"
-              body="Coming next: manage users, roles, and account assignments."
-              href="/admin"
-              disabled
-            />
+  title="Users and Roles"
+  body="Manage users in your accounts and send password reset emails."
+  href="/admin/users"
+/>
           </div>
         </section>
       </main>

@@ -71,6 +71,7 @@ export async function POST(req: Request) {
       .upsert(
         {
           id: userId,
+          email,
           full_name,
           role,
           account_id,

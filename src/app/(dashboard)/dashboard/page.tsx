@@ -182,21 +182,21 @@ export default async function DashboardHome() {
         </div>
       </section>
 
-      {/* Agent + Command Center */}
+      {/* Agent LEFT + Command Center RIGHT */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <AgentPanel accountId={accountId} accountName={accountName} viewerId={profile.id} />
 
         <div className="fw-card-strong p-7">
-          <div className="text-sm font-semibold text-gray-900">CEO Command Center</div>
+          <div className="text-xl font-semibold tracking-tight text-gray-900">Command Center</div>
           <div className="mt-1 text-sm text-gray-600">
-            Everything here is clickable. This is your daily operating system.
+            Your executive shortcuts. Everything here is clickable.
           </div>
 
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <CommandCard
-              title="Weekly CEO Report"
-              desc="Auto-generated report for leadership focus."
-              href="/dashboard#weekly-report"
+              title="Weekly Executive Report"
+              desc="Auto-generated leadership report for focus and priorities."
+              href="/dashboard/reports/weekly"
             />
             <CommandCard
               title="Overdue Tasks"
@@ -216,12 +216,12 @@ export default async function DashboardHome() {
           </div>
 
           <div className="mt-5 text-xs text-gray-500">
-            Next: export to PDF, one-click investor summary, and CEO daily brief notifications.
+            Next: profile collection system, real heatmap, and CEO brief notifications.
           </div>
         </div>
       </section>
 
-      {/* CEO Overview + charts */}
+      {/* CEO Overview + charts (already clickable inside component) */}
       <CeoOverview />
 
       {/* Tools */}
@@ -239,7 +239,7 @@ export default async function DashboardHome() {
 
         {isAdmin ? (
           <div className="mt-9 border-t border-black/10 pt-7">
-            <div className="text-sm font-semibold text-gray-900">CEO Admin Panel</div>
+            <div className="text-sm font-semibold text-gray-900">Admin Panel</div>
             <div className="mt-1 text-sm text-gray-600">Approve users, assign roles, and manage accounts.</div>
 
             <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -251,7 +251,7 @@ export default async function DashboardHome() {
         ) : null}
       </section>
 
-      {/* Executive Overview */}
+      {/* Executive Overview (ALL CLICKABLE) */}
       <section className="fw-card-strong p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -266,54 +266,77 @@ export default async function DashboardHome() {
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard
-            title="Site Visitors Today"
-            value="—"
-            sub="7 days: —  30 days: —"
-            note="GA4 not connected in this build yet."
-          />
-          <MetricCard
-            title="Meetings Booked"
-            value={fmt(meetingsBooked)}
-            sub={`YCBM: ${fmt(ycbmBooked)}`}
-            note="Freshware meetings + optional YCBM."
-          />
-          <MetricCard
-            title="Prospects Open"
-            value={fmt(openOppCount)}
-            sub={`Open pipeline: $${fmt(openPipeline)}`}
-            note="Opportunities not won/lost."
-          />
-          <MetricCard
-            title="Active Projects"
-            value={fmt(activeProjects)}
-            sub={`Total projects: ${fmt(totalProjects)}`}
-            note="Status not done/closed/completed/cancelled."
-          />
-          <MetricCard
-            title="Total Opportunities"
-            value={fmt(totalOppCount)}
-            sub="Open + won + lost"
-            note="Account scoped."
-          />
-          <MetricCard
-            title="Total Tasks"
-            value={fmt(totalTasks)}
-            sub="All tasks in account"
-            note="Account scoped."
-          />
-          <MetricCard
-            title="Total Users"
-            value={fmt(totalUsers)}
-            sub="Users in this account"
-            note="Account scoped."
-          />
-          <MetricCard
-            title="Revenue"
-            value={isAdmin ? (revenueTotal === null ? "—" : `$${fmt(revenueTotal)}`) : "Restricted"}
-            sub={isAdmin ? "From revenue_entries" : "CEO/Admin only"}
-            note={isAdmin ? "Connect revenue entries to dashboards." : "Only visible to CEO/Admin."}
-          />
+          <Link href="/dashboard/reports/analytics" className="block">
+            <MetricCard
+              title="Site Visitors Today"
+              value="—"
+              sub="7 days: —  30 days: —"
+              note="GA4 not connected in this build yet."
+            />
+          </Link>
+
+          <Link href="/dashboard/meetings" className="block">
+            <MetricCard
+              title="Meetings Booked"
+              value={fmt(meetingsBooked)}
+              sub={`YCBM: ${fmt(ycbmBooked)}`}
+              note="Freshware meetings + optional YCBM."
+            />
+          </Link>
+
+          <Link href="/dashboard/opportunities" className="block">
+            <MetricCard
+              title="Prospects Open"
+              value={fmt(openOppCount)}
+              sub={`Open pipeline: $${fmt(openPipeline)}`}
+              note="Opportunities not won/lost."
+            />
+          </Link>
+
+          <Link href="/dashboard/projects" className="block">
+            <MetricCard
+              title="Active Projects"
+              value={fmt(activeProjects)}
+              sub={`Total projects: ${fmt(totalProjects)}`}
+              note="Status not done/closed/completed/cancelled."
+            />
+          </Link>
+
+          <Link href="/dashboard/opportunities" className="block">
+            <MetricCard
+              title="Total Opportunities"
+              value={fmt(totalOppCount)}
+              sub="Open + won + lost"
+              note="Account scoped."
+            />
+          </Link>
+
+          <Link href="/dashboard/tasks" className="block">
+            <MetricCard
+              title="Total Tasks"
+              value={fmt(totalTasks)}
+              sub="All tasks in account"
+              note="Account scoped."
+            />
+          </Link>
+
+          <Link href="/admin/users" className="block">
+            <MetricCard
+              title="Total Users"
+              value={fmt(totalUsers)}
+              sub="Users in this account"
+              note="Account scoped."
+            />
+          </Link>
+
+          <Link href="/dashboard/reports/revenue" className="block">
+            <MetricCard
+              title="Revenue"
+              value={isAdmin ? (revenueTotal === null ? "—" : `$${fmt(revenueTotal)}`) : "Restricted"}
+              sub={isAdmin ? "From revenue_entries" : "CEO/Admin only"}
+              note={isAdmin ? "Connect revenue entries to dashboards." : "Only visible to CEO/Admin."}
+            />
+          </Link>
         </div>
       </section>
     </div>
@@ -361,7 +384,7 @@ function InfoPill(props: { label: string; value: string; good?: boolean }) {
 
 function MetricCard(props: { title: string; value: string; sub: string; note: string }) {
   return (
-    <div className="fw-card p-6">
+    <div className="fw-card fw-interactive p-6">
       <div className="text-sm font-semibold text-gray-900">{props.title}</div>
       <div className="mt-2 text-3xl font-semibold text-gray-900">{props.value}</div>
       <div className="mt-2 text-sm text-gray-600">{props.sub}</div>

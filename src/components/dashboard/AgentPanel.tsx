@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type AgentPanelProps = {
   accountId: string;
@@ -29,7 +28,7 @@ export default function AgentPanel(_: AgentPanelProps) {
     {
       role: "assistant",
       text:
-        "CEO Command Agent online.\n\nTry:\n- What should I focus on today?\n- Summarize pipeline + next best actions\n- Draft an email follow-up to the hottest deal\n- Create a task: Follow up with top 3 prospects due Friday 2pm CST",
+        "Command Agent online.\n\nTry:\n- What should I focus on today?\n- Summarize pipeline + next best actions\n- Create a task: Follow up with top 3 prospects due Friday 2pm CST\n- Show project risks + fix plan",
     },
   ]);
   const [input, setInput] = useState("");
@@ -70,7 +69,7 @@ export default function AgentPanel(_: AgentPanelProps) {
   async function weeklyReport() {
     setBusy(true);
     try {
-      pushUser("Weekly CEO report");
+      pushUser("Weekly executive report");
       const res = await fetch("/api/ceo/weekly-report", { cache: "no-store" });
       const data = await safeJson(res);
       if (data?.error) throw new Error(data.error);
@@ -82,50 +81,61 @@ export default function AgentPanel(_: AgentPanelProps) {
     }
   }
 
+  // Listen for Command Palette “AI commands”
+  useEffect(() => {
+    function onCmd(e: any) {
+      const text = e?.detail?.text;
+      if (typeof text === "string" && text.trim()) {
+        sendAgent(text);
+      }
+    }
+    window.addEventListener("freshware:agentCommand", onCmd as any);
+    return () => window.removeEventListener("freshware:agentCommand", onCmd as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="fw-card-strong p-7">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-xl font-semibold tracking-tight text-zinc-900">
-            CEO Command Agent
-          </div>
-          <div className="mt-1 text-sm text-zinc-600">
-            Reports · Drilldowns · Actions
-          </div>
+          <div className="text-xl font-semibold tracking-tight text-zinc-900">Command Agent</div>
+          <div className="mt-1 text-sm text-zinc-600">Reports · Drilldowns · Actions</div>
         </div>
         <span className="fw-chip">{busy ? "Working" : "Online"}</span>
       </div>
 
+      {/* Buttons now run AI commands inside the agent (not navigation) */}
       <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        <button
-          type="button"
-          onClick={weeklyReport}
-          disabled={busy}
-          className="fw-btn h-11 text-sm disabled:opacity-60"
-        >
-          Weekly CEO Report
+        <button type="button" onClick={weeklyReport} disabled={busy} className="fw-btn h-11 text-sm disabled:opacity-60">
+          Weekly Report
         </button>
 
-        <Link
-          href="/dashboard/reports/overdue"
-          className="fw-btn h-11 text-sm flex items-center justify-center"
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => sendAgent("Review overdue tasks. Prioritize the top 10 by urgency and assign who should do what next.")}
+          className="fw-btn h-11 text-sm disabled:opacity-60"
         >
-          Overdue Tasks
-        </Link>
+          Overdue – Prioritize
+        </button>
 
-        <Link
-          href="/dashboard/reports/pipeline"
-          className="fw-btn h-11 text-sm flex items-center justify-center"
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => sendAgent("Summarize pipeline by stage and list top deals with next best actions to move them forward.")}
+          className="fw-btn h-11 text-sm disabled:opacity-60"
         >
-          Pipeline Drilldown
-        </Link>
+          Pipeline – Actions
+        </button>
 
-        <Link
-          href="/dashboard/reports/projects-health"
-          className="fw-btn h-11 text-sm flex items-center justify-center"
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => sendAgent("Analyze project health. Identify the riskiest projects and provide a fix plan for each.")}
+          className="fw-btn h-11 text-sm disabled:opacity-60"
         >
-          Project Health Heatmap
-        </Link>
+          Projects – Risks
+        </button>
       </div>
 
       <div className="mt-5 rounded-2xl border border-black/10 bg-white/70 backdrop-blur-md">
@@ -134,20 +144,16 @@ export default function AgentPanel(_: AgentPanelProps) {
           <div className="text-xs text-zinc-600">Enter to send · Shift+Enter for newline</div>
         </div>
 
-        <div className="max-h-[340px] overflow-auto p-4 space-y-3">
+        <div className="fw-scroll max-h-[340px] overflow-auto p-4 space-y-3">
           {messages.map((m, idx) => (
             <div
               key={idx}
               className={cls(
                 "rounded-2xl border border-black/10 p-3",
-                m.role === "user"
-                  ? "bg-black text-white border-black/20"
-                  : "bg-white text-zinc-900"
+                m.role === "user" ? "bg-black text-white border-black/20" : "bg-white text-zinc-900"
               )}
             >
-              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed m-0">
-                {m.text}
-              </pre>
+              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed m-0">{m.text}</pre>
             </div>
           ))}
         </div>
@@ -163,7 +169,7 @@ export default function AgentPanel(_: AgentPanelProps) {
                   sendAgent(input);
                 }
               }}
-              className="h-11 w-full rounded-xl border border-black/10 bg-white px-3 text-sm outline-none"
+              className="fw-input"
               placeholder="Ask a CEO question or issue a command..."
             />
             <button
@@ -179,35 +185,8 @@ export default function AgentPanel(_: AgentPanelProps) {
             </button>
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="fw-btn text-sm"
-              disabled={busy}
-              onClick={() => sendAgent("What should I focus on today?")}
-            >
-              Today’s Focus
-            </button>
-            <button
-              type="button"
-              className="fw-btn text-sm"
-              disabled={busy}
-              onClick={() => sendAgent("Summarize pipeline and tell me the next best actions.")}
-            >
-              Pipeline Actions
-            </button>
-            <button
-              type="button"
-              className="fw-btn text-sm"
-              disabled={busy}
-              onClick={() => sendAgent("Show me the biggest risks across projects and what to fix first.")}
-            >
-              Project Risks
-            </button>
-          </div>
-
           <div className="mt-2 text-[11px] text-zinc-600">
-            Reports are instant. Drilldowns live in the dashboard pages.
+            Tip: Press <span className="font-semibold">⌘K / Ctrl+K</span> for Command Palette.
           </div>
         </div>
       </div>

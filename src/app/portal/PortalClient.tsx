@@ -12,23 +12,20 @@ export default function PortalClient() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const nextUrl = searchParams.get("next") || "/dashboard";
 
   useEffect(() => {
-    let isMounted = true;
+    let mounted = true;
 
     (async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (!isMounted) return;
-
-      if (error) {
-        setChecking(false);
-        return;
-      }
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
 
       if (data.session) {
         router.replace(nextUrl);
@@ -39,17 +36,18 @@ export default function PortalClient() {
     })();
 
     return () => {
-      isMounted = false;
+      mounted = false;
     };
   }, [router, nextUrl]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setMessage(null);
     setLoading(true);
 
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: email.trim().toLowerCase(),
       password,
     });
 
@@ -61,20 +59,21 @@ export default function PortalClient() {
     }
 
     router.replace(nextUrl);
+    router.refresh();
   }
 
-  async function onSendMagicLink() {
+  async function onForgotPassword() {
+    const clean = email.trim().toLowerCase();
+    if (!clean) return;
+
     setError(null);
+    setMessage(null);
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-          nextUrl
-        )}`,
-      },
-    });
+    const origin = window.location.origin;
+    const redirectTo = `${origin}/auth/reset?next=${encodeURIComponent(nextUrl)}`;
+
+    const { error } = await supabase.auth.resetPasswordForEmail(clean, { redirectTo });
 
     setLoading(false);
 
@@ -83,30 +82,28 @@ export default function PortalClient() {
       return;
     }
 
-    setError("Magic link sent. Check your email.");
+    setMessage("Password reset email sent. Check your inbox.");
   }
 
   if (checking) {
     return (
       <main className="min-h-screen flex items-center justify-center p-6">
-        <div className="text-sm text-muted-foreground">Checking session...</div>
+        <div className="text-sm text-gray-600">Checking session...</div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-6">
-      <div className="w-full max-w-md rounded-2xl border bg-background p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">Freshware Portal</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Sign in to access your dashboard.
-        </p>
+    <main className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-b from-gray-50 via-white to-white">
+      <div className="w-full max-w-md fw-card-strong p-7">
+        <div className="text-xl font-semibold text-gray-900">Freshware Portal</div>
+        <div className="mt-1 text-sm text-gray-600">Sign in to access your dashboard.</div>
 
         <form onSubmit={onSubmit} className="mt-6 space-y-3">
           <div className="space-y-1">
-            <label className="text-sm font-medium">Email</label>
+            <label className="text-sm font-semibold text-gray-900">Email</label>
             <input
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm outline-none"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               type="email"
@@ -116,9 +113,9 @@ export default function PortalClient() {
           </div>
 
           <div className="space-y-1">
-            <label className="text-sm font-medium">Password</label>
+            <label className="text-sm font-semibold text-gray-900">Password</label>
             <input
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm outline-none"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               type="password"
@@ -127,8 +124,14 @@ export default function PortalClient() {
             />
           </div>
 
+          {message ? (
+            <div className="rounded-2xl border border-black/10 bg-white/80 px-3 py-2 text-sm text-gray-800">
+              {message}
+            </div>
+          ) : null}
+
           {error ? (
-            <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
             </div>
           ) : null}
@@ -136,22 +139,22 @@ export default function PortalClient() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+            className="w-full h-11 rounded-xl bg-black text-white text-sm font-semibold disabled:opacity-60"
           >
             {loading ? "Signing in..." : "Sign in"}
           </button>
 
           <button
             type="button"
-            onClick={onSendMagicLink}
-            disabled={loading || !email}
-            className="w-full rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-60"
+            onClick={onForgotPassword}
+            disabled={loading || !email.trim()}
+            className="w-full h-11 rounded-xl border border-black/10 bg-white text-sm font-semibold disabled:opacity-60"
           >
-            {loading ? "Sending..." : "Send magic link instead"}
+            {loading ? "Sending..." : "Forgot password / Set password"}
           </button>
 
-          <div className="pt-2 text-xs text-muted-foreground">
-            Tip: Add a deep link using ?next=/dashboard/opportunities
+          <div className="pt-2 text-xs text-gray-500">
+            Tip: deep link with ?next=/dashboard/opportunities
           </div>
         </form>
       </div>
