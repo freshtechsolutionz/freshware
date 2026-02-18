@@ -55,6 +55,21 @@ function isDueSoon(dueIso: string | null, days = 7) {
   return diffDays >= 0 && diffDays <= days;
 }
 
+function fmtDue(dueIso: string | null) {
+  if (!dueIso) return "None";
+  const d = new Date(dueIso);
+  if (Number.isNaN(d.getTime())) return "Invalid";
+  return d.toLocaleDateString();
+}
+
+function statusChip(s: TaskStatus) {
+  const base = "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold";
+  if (s === "Done") return `${base} border-green-200 bg-green-50 text-green-700`;
+  if (s === "Blocked") return `${base} border-red-200 bg-red-50 text-red-700`;
+  if (s === "In Progress") return `${base} border-blue-200 bg-blue-50 text-blue-700`;
+  return `${base} border-gray-200 bg-gray-50 text-gray-700`;
+}
+
 export default function TasksTable({ role, viewerId, tasks }: Props) {
   const roleUpper = (role || "").toUpperCase();
   const canCreate = ["CEO", "ADMIN", "SALES"].includes(roleUpper);
@@ -181,7 +196,6 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
       return;
     }
 
-    // all
     setStatuses(["New", "In Progress", "Done", "Blocked"]);
     setDueSoon(false);
     setMyTasks(false);
@@ -259,7 +273,6 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
         return;
       }
 
-      // Refresh page data
       window.location.reload();
     } catch {
       setToast("Status update failed");
@@ -274,17 +287,18 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
         <div className="mb-3 rounded-lg border bg-background px-3 py-2 text-sm">{toast}</div>
       ) : null}
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button onClick={() => setQuickPreset("open")} className="rounded-lg border px-3 py-2 text-sm">
+      {/* Quick filters – scrollable on mobile */}
+      <div className="mb-3 -mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1">
+        <button onClick={() => setQuickPreset("open")} className="shrink-0 rounded-lg border px-3 py-2 text-sm">
           Open
         </button>
-        <button onClick={() => setQuickPreset("mine")} className="rounded-lg border px-3 py-2 text-sm">
+        <button onClick={() => setQuickPreset("mine")} className="shrink-0 rounded-lg border px-3 py-2 text-sm">
           My Tasks
         </button>
-        <button onClick={() => setQuickPreset("due")} className="rounded-lg border px-3 py-2 text-sm">
+        <button onClick={() => setQuickPreset("due")} className="shrink-0 rounded-lg border px-3 py-2 text-sm">
           Due Soon
         </button>
-        <button onClick={() => setQuickPreset("all")} className="rounded-lg border px-3 py-2 text-sm">
+        <button onClick={() => setQuickPreset("all")} className="shrink-0 rounded-lg border px-3 py-2 text-sm">
           All
         </button>
 
@@ -299,7 +313,7 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
             if (p) applyPreset(p);
             e.currentTarget.value = "";
           }}
-          className="rounded-lg border px-3 py-2 text-sm"
+          className="shrink-0 rounded-lg border px-3 py-2 text-sm"
         >
           <option value="">Load preset...</option>
           {presets.map((p) => (
@@ -317,18 +331,14 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search tasks..."
-              className="min-w-[220px] rounded-lg border px-3 py-2 text-sm"
+              className="w-full sm:w-auto sm:min-w-[220px] rounded-lg border px-3 py-2 text-sm"
             />
 
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
+            <div className="w-full sm:w-auto flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
               <span className="text-xs font-semibold">Status</span>
               {STATUSES.map((s) => (
                 <label key={s} className="flex items-center gap-1 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={statuses.includes(s)}
-                    onChange={() => toggleStatus(s)}
-                  />
+                  <input type="checkbox" checked={statuses.includes(s)} onChange={() => toggleStatus(s)} />
                   <span>{s}</span>
                 </label>
               ))}
@@ -337,7 +347,7 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
             <select
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              className="rounded-lg border px-3 py-2 text-sm max-w-[240px]"
+              className="w-full sm:w-auto rounded-lg border px-3 py-2 text-sm sm:max-w-[240px]"
             >
               <option value="">All projects</option>
               {projectOptions.map((p) => (
@@ -351,7 +361,7 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
               value={assigneeId}
               onChange={(e) => setAssigneeId(e.target.value)}
               disabled={myTasks}
-              className="rounded-lg border px-3 py-2 text-sm max-w-[220px] disabled:opacity-60"
+              className="w-full sm:w-auto rounded-lg border px-3 py-2 text-sm sm:max-w-[220px] disabled:opacity-60"
             >
               <option value="">All assignees</option>
               {assigneeOptions.map((u) => (
@@ -367,11 +377,7 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
             </label>
 
             <label className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
-              <input
-                type="checkbox"
-                checked={myTasks}
-                onChange={(e) => setMyTasks(e.target.checked)}
-              />
+              <input type="checkbox" checked={myTasks} onChange={(e) => setMyTasks(e.target.checked)} />
               My tasks
             </label>
 
@@ -394,12 +400,7 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
               placeholder="Preset name"
               className="min-w-[160px] rounded-lg border px-3 py-2 text-sm"
             />
-            <button
-              onClick={saveCurrentPreset}
-              disabled={savingPreset}
-              className="rounded-lg border px-3 py-2 text-sm"
-              type="button"
-            >
+            <button onClick={saveCurrentPreset} disabled={savingPreset} className="rounded-lg border px-3 py-2 text-sm" type="button">
               Save preset
             </button>
 
@@ -427,133 +428,215 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
         </div>
       ) : null}
 
-      <DataTableShell>
-        <table className="w-full border-collapse text-sm table-fixed">
-          <colgroup>
-  <col style={{ width: "34%" }} />
-  <col style={{ width: "22%" }} />
-  <col style={{ width: "14%" }} />
-  <col style={{ width: "10%" }} />
-  <col style={{ width: "20%" }} />
-</colgroup>
+      {/* MOBILE VIEW: cards */}
+      <div className="md:hidden space-y-3">
+        {rows.length === 0 ? (
+          <div className="rounded-2xl border bg-background p-4">
+            <EmptyState
+              title="No tasks found"
+              description="Try changing filters or create a new task."
+              actionHref={canCreate ? "/dashboard/tasks/new" : undefined}
+              actionLabel={canCreate ? "+ Create task" : undefined}
+            />
+          </div>
+        ) : (
+          rows.map((t) => (
+            <div key={t.task_id} className="rounded-2xl border bg-background p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-base font-semibold text-gray-900 break-words">
+                    {t.title || "(No title)"}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className={statusChip(t.status)}>{t.status}</span>
+                    <span className="inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold bg-white">
+                      Due: {fmtDue(t.due_at)}
+                    </span>
+                  </div>
+                </div>
 
+                <Link href={`/dashboard/tasks/${t.task_id}`} className="fw-chip shrink-0">
+                  Open
+                </Link>
+              </div>
 
-          <thead>
-            <tr className="bg-muted/30">
-<Th>Task</Th>
-<Th>Project</Th>
-<Th>Assignee</Th>
-<Th>Due</Th>
-<Th>Status</Th>
+              <div className="mt-3 text-sm text-gray-700">
+                <div className="text-xs font-semibold text-gray-700">Project</div>
+                <div className="mt-1">
+                  {t.opportunity_id ? (
+                    <Link href={`/dashboard/opportunities/${t.opportunity_id}`} className="underline font-medium break-words">
+                      {t.opportunity_name || "View project"}
+                    </Link>
+                  ) : (
+                    <span className="text-gray-500">Unassigned</span>
+                  )}
+                </div>
+              </div>
 
-            </tr>
-          </thead>
+              <div className="mt-3 text-sm text-gray-700">
+                <div className="text-xs font-semibold text-gray-700">Assignee</div>
+                <div className="mt-1">
+                  {t.assignee_name ? <span className="font-medium">{t.assignee_name}</span> : <span className="text-gray-500">Unassigned</span>}
+                </div>
+              </div>
 
-          <tbody>
-            {rows.map((t) => (
-              <tr key={t.task_id} className="border-t align-top">
-                <Td>
-                  <div className="min-w-0 overflow-hidden">
-                    <div className="font-semibold break-words">{t.title || "(No title)"}</div>
+              {t.description ? (
+                <div className="mt-3 text-sm text-gray-700">
+                  <div className="text-xs font-semibold text-gray-700">Notes</div>
+                  <div className="mt-1 break-words">{truncate(t.description, 220)}</div>
+                </div>
+              ) : null}
 
-                    {t.description ? (
-                      <div
-                        className="mt-1 text-xs text-muted-foreground break-words overflow-hidden"
-                        style={{
-                          display: "-webkit-box",
-                          WebkitLineClamp: 3,
-                          WebkitBoxOrient: "vertical",
-                        }}
-                        title={t.description}
+              {canUpdateStatus ? (
+                <div className="mt-4">
+                  <div className="text-xs font-semibold text-gray-700">Update status</div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {STATUSES.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        disabled={statusWorking === t.task_id || s === t.status}
+                        onClick={() => updateTaskStatus(t.task_id, s)}
+                        className="h-11 rounded-xl border px-3 text-sm font-semibold disabled:opacity-50"
                       >
-                        {truncate(t.description, 500)}
-                      </div>
-                    ) : (
-                      <div className="mt-1 text-xs text-muted-foreground">No description</div>
-                    )}
-
-                    <div className="mt-2 text-[11px] text-muted-foreground font-mono overflow-hidden text-ellipsis">
-                      {t.task_id}
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap gap-3 text-sm">
-                      <Link href={`/dashboard/tasks/${t.task_id}`} className="underline">
-                        View / Edit
-                      </Link>
-                    </div>
+                        {statusWorking === t.task_id && s !== t.status ? "Working..." : s}
+                      </button>
+                    ))}
                   </div>
-                </Td>
+                </div>
+              ) : null}
+            </div>
+          ))
+        )}
+      </div>
 
-                <Td>
-                  <div className="min-w-0 overflow-hidden">
-                    {t.opportunity_id ? (
-                      <Link href={`/dashboard/opportunities/${t.opportunity_id}`} className="underline font-medium break-words">
-                        {t.opportunity_name || "View project"}
-                      </Link>
-                    ) : (
-                      <span className="text-muted-foreground">Unassigned</span>
-                    )}
-                  </div>
-                </Td>
+      {/* DESKTOP VIEW: table */}
+      <div className="hidden md:block">
+        <DataTableShell>
+          <table className="w-full border-collapse text-sm table-fixed">
+            <colgroup>
+              <col style={{ width: "34%" }} />
+              <col style={{ width: "22%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "20%" }} />
+            </colgroup>
 
-                <Td>
-                  <div className="min-w-0 overflow-hidden break-words">
-                    {t.assignee_name ? (
-                      <span className="font-medium">{t.assignee_name}</span>
-                    ) : (
-                      <span className="text-muted-foreground">Unassigned</span>
-                    )}
-                  </div>
-                </Td>
-<Td>
-  {t.due_at ? (
-    <div className="text-sm">
-      {new Date(t.due_at).toLocaleDateString()}
-    </div>
-  ) : (
-    <span className="text-muted-foreground">None</span>
-  )}
-</Td>
-
-                <Td>
-                  <div className="min-w-0 overflow-hidden">
-                    <div className="text-sm font-semibold">{t.status}</div>
-
-                    {canUpdateStatus ? (
-                      <div className="mt-2 grid grid-cols-2 gap-2">
-                        {STATUSES.map((s) => (
-                          <button
-                            key={s}
-                            type="button"
-                            disabled={statusWorking === t.task_id || s === t.status}
-                            onClick={() => updateTaskStatus(t.task_id, s)}
-                            className="rounded-lg border px-2 py-1 text-xs disabled:opacity-50"
-                          >
-                            {statusWorking === t.task_id && s !== t.status ? "Working..." : s}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </Td>
+            <thead>
+              <tr className="bg-muted/30">
+                <Th>Task</Th>
+                <Th>Project</Th>
+                <Th>Assignee</Th>
+                <Th>Due</Th>
+                <Th>Status</Th>
               </tr>
-            ))}
+            </thead>
 
-            {rows.length === 0 && (
-              <tr>
-                <Td colSpan={5}>
-                  <EmptyState
-                    title="No tasks found"
-                    description="Try changing filters or create a new task."
-                    actionHref={canCreate ? "/dashboard/tasks/new" : undefined}
-                    actionLabel={canCreate ? "+ Create task" : undefined}
-                  />
-                </Td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </DataTableShell>
+            <tbody>
+              {rows.map((t) => (
+                <tr key={t.task_id} className="border-t align-top">
+                  <Td>
+                    <div className="min-w-0 overflow-hidden">
+                      <div className="font-semibold break-words">{t.title || "(No title)"}</div>
+
+                      {t.description ? (
+                        <div
+                          className="mt-1 text-xs text-muted-foreground break-words overflow-hidden"
+                          style={{
+                            display: "-webkit-box",
+                            WebkitLineClamp: 3,
+                            WebkitBoxOrient: "vertical",
+                          }}
+                          title={t.description}
+                        >
+                          {truncate(t.description, 500)}
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-xs text-muted-foreground">No description</div>
+                      )}
+
+                      <div className="mt-2 text-[11px] text-muted-foreground font-mono overflow-hidden text-ellipsis">
+                        {t.task_id}
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-3 text-sm">
+                        <Link href={`/dashboard/tasks/${t.task_id}`} className="underline">
+                          View / Edit
+                        </Link>
+                      </div>
+                    </div>
+                  </Td>
+
+                  <Td>
+                    <div className="min-w-0 overflow-hidden">
+                      {t.opportunity_id ? (
+                        <Link href={`/dashboard/opportunities/${t.opportunity_id}`} className="underline font-medium break-words">
+                          {t.opportunity_name || "View project"}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">Unassigned</span>
+                      )}
+                    </div>
+                  </Td>
+
+                  <Td>
+                    <div className="min-w-0 overflow-hidden break-words">
+                      {t.assignee_name ? <span className="font-medium">{t.assignee_name}</span> : <span className="text-muted-foreground">Unassigned</span>}
+                    </div>
+                  </Td>
+
+                  <Td>{t.due_at ? <div className="text-sm">{new Date(t.due_at).toLocaleDateString()}</div> : <span className="text-muted-foreground">None</span>}</Td>
+
+                  <Td>
+                    <div className="min-w-0 overflow-hidden">
+                      <div className="text-sm font-semibold">{t.status}</div>
+
+                      {canUpdateStatus ? (
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          {STATUSES.map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              disabled={statusWorking === t.task_id || s === t.status}
+                              onClick={() => updateTaskStatus(t.task_id, s)}
+                              className="rounded-lg border px-2 py-1 text-xs disabled:opacity-50"
+                            >
+                              {statusWorking === t.task_id && s !== t.status ? "Working..." : s}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </Td>
+                </tr>
+              ))}
+
+              {rows.length === 0 && (
+                <tr>
+                  <Td colSpan={5}>
+                    <EmptyState
+                      title="No tasks found"
+                      description="Try changing filters or create a new task."
+                      actionHref={canCreate ? "/dashboard/tasks/new" : undefined}
+                      actionLabel={canCreate ? "+ Create task" : undefined}
+                    />
+                  </Td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </DataTableShell>
+      </div>
+
+      {/* Mobile sticky create button */}
+      {canCreate ? (
+        <Link
+          href="/dashboard/tasks/new"
+          className="md:hidden fixed bottom-5 right-5 z-50 rounded-full bg-black text-white px-5 py-3 text-sm font-semibold shadow-lg"
+        >
+          + Task
+        </Link>
+      ) : null}
     </div>
   );
 }

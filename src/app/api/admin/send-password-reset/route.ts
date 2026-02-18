@@ -5,6 +5,16 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
+function baseUrlFromEnv(fallback: string) {
+  const raw =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.SITE_URL ||
+    fallback;
+
+  return raw.replace(/\/+$/, "");
+}
+
 export async function POST(req: Request) {
   try {
     const { email } = (await req.json()) as { email: string };
@@ -32,21 +42,24 @@ export async function POST(req: Request) {
     const isAdmin = role === "CEO" || role === "ADMIN";
     if (!isAdmin) return NextResponse.json({ error: "Not authorized." }, { status: 403 });
 
-    // Use service role client to avoid edge cases
+    // Service role
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     if (!serviceKey) return NextResponse.json({ error: "SUPABASE_SERVICE_ROLE_KEY missing." }, { status: 500 });
 
     const admin = createClient(url, serviceKey);
 
-    // Send Supabase password recovery email (via GoTrue)
+    // IMPORTANT: use your real site URL (prod) if available
     const origin = new URL(req.url).origin;
-    const redirectTo = `${origin}/auth/reset?next=${encodeURIComponent("/dashboard")}`;
+    const baseUrl = baseUrlFromEnv(origin);
+
+    // Must match a Redirect URL allowed in Supabase Auth settings
+    const redirectTo = `${baseUrl}/auth/reset`;
 
     const { error } = await admin.auth.resetPasswordForEmail(cleanEmail, { redirectTo });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, redirectTo });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Unknown error" }, { status: 500 });
   }

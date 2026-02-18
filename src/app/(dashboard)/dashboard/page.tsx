@@ -18,6 +18,13 @@ function fmt(n: number) {
   return new Intl.NumberFormat().format(n);
 }
 
+function fmtDue(dueIso: string | null) {
+  if (!dueIso) return "No due date";
+  const d = new Date(dueIso);
+  if (Number.isNaN(d.getTime())) return "Invalid date";
+  return d.toLocaleDateString();
+}
+
 export default async function DashboardHome() {
   const cookieStore = await cookies();
 
@@ -69,7 +76,7 @@ export default async function DashboardHome() {
     .maybeSingle();
   const accountName = acct?.name || accountId;
 
-  // Executive Overview metrics (server-side)
+  // Executive Overview metrics
   const [
     usersRes,
     tasksRes,
@@ -132,6 +139,25 @@ export default async function DashboardHome() {
     const rows = (revenueRes.data || []) as any[];
     revenueTotal = rows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
   }
+
+  // ✅ MY TODO (assigned to me, across all projects)
+  const { data: myTodoData } = await supabase
+    .from("tasks")
+    .select("task_id,title,status,due_at,opportunity_id")
+    .eq("account_id", accountId)
+    .eq("assigned_to", profile.id)
+    .neq("status", "Done")
+    .order("due_at", { ascending: true })
+    .order("created_at", { ascending: false })
+    .limit(8);
+
+  const myTodo = (myTodoData || []) as Array<{
+    task_id: string;
+    title: string | null;
+    status: string | null;
+    due_at: string | null;
+    opportunity_id: string | null;
+  }>;
 
   const tools = [
     { label: "Sales Pipeline", href: "/dashboard/sales" },
@@ -221,7 +247,50 @@ export default async function DashboardHome() {
         </div>
       </section>
 
-      {/* CEO Overview + charts (already clickable inside component) */}
+      {/* ✅ My To-Do (doesn’t disrupt the flow) */}
+      <section className="fw-card-strong p-7">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-lg font-semibold text-gray-900">My To-Do</div>
+            <div className="mt-1 text-sm text-gray-600">
+              Tasks assigned to you across all projects.
+            </div>
+          </div>
+          <Link href="/dashboard/tasks" className="fw-btn text-sm">
+            Open Tasks
+          </Link>
+        </div>
+
+        <div className="mt-5 divide-y divide-black/10 rounded-2xl border bg-white/60">
+          {myTodo.length === 0 ? (
+            <div className="p-4 text-sm text-gray-600">Nothing assigned to you right now.</div>
+          ) : (
+            myTodo.map((t) => (
+              <Link
+                key={t.task_id}
+                href={`/dashboard/tasks/${t.task_id}`}
+                className="block p-4 hover:bg-white transition"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-gray-900 break-words">
+                      {t.title || "(No title)"}
+                    </div>
+                    <div className="mt-1 text-xs text-gray-600">
+                      Due: <span className="font-semibold text-gray-900">{fmtDue(t.due_at)}</span>{" "}
+                      <span className="text-gray-400">•</span>{" "}
+                      Status: <span className="font-semibold text-gray-900">{t.status || "—"}</span>
+                    </div>
+                  </div>
+                  <span className="fw-chip shrink-0">Open</span>
+                </div>
+              </Link>
+            ))
+          )}
+        </div>
+      </section>
+
+      {/* CEO Overview */}
       <CeoOverview />
 
       {/* Tools */}
@@ -251,7 +320,7 @@ export default async function DashboardHome() {
         ) : null}
       </section>
 
-      {/* Executive Overview (ALL CLICKABLE) */}
+      {/* Executive Overview */}
       <section className="fw-card-strong p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -267,66 +336,31 @@ export default async function DashboardHome() {
 
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Link href="/dashboard/reports/analytics" className="block">
-            <MetricCard
-              title="Site Visitors Today"
-              value="—"
-              sub="7 days: —  30 days: —"
-              note="GA4 not connected in this build yet."
-            />
+            <MetricCard title="Site Visitors Today" value="—" sub="7 days: —  30 days: —" note="GA4 not connected in this build yet." />
           </Link>
 
           <Link href="/dashboard/meetings" className="block">
-            <MetricCard
-              title="Meetings Booked"
-              value={fmt(meetingsBooked)}
-              sub={`YCBM: ${fmt(ycbmBooked)}`}
-              note="Freshware meetings + optional YCBM."
-            />
+            <MetricCard title="Meetings Booked" value={fmt(meetingsBooked)} sub={`YCBM: ${fmt(ycbmBooked)}`} note="Freshware meetings + optional YCBM." />
           </Link>
 
           <Link href="/dashboard/opportunities" className="block">
-            <MetricCard
-              title="Prospects Open"
-              value={fmt(openOppCount)}
-              sub={`Open pipeline: $${fmt(openPipeline)}`}
-              note="Opportunities not won/lost."
-            />
+            <MetricCard title="Prospects Open" value={fmt(openOppCount)} sub={`Open pipeline: $${fmt(openPipeline)}`} note="Opportunities not won/lost." />
           </Link>
 
           <Link href="/dashboard/projects" className="block">
-            <MetricCard
-              title="Active Projects"
-              value={fmt(activeProjects)}
-              sub={`Total projects: ${fmt(totalProjects)}`}
-              note="Status not done/closed/completed/cancelled."
-            />
+            <MetricCard title="Active Projects" value={fmt(activeProjects)} sub={`Total projects: ${fmt(totalProjects)}`} note="Status not done/closed/completed/cancelled." />
           </Link>
 
           <Link href="/dashboard/opportunities" className="block">
-            <MetricCard
-              title="Total Opportunities"
-              value={fmt(totalOppCount)}
-              sub="Open + won + lost"
-              note="Account scoped."
-            />
+            <MetricCard title="Total Opportunities" value={fmt(totalOppCount)} sub="Open + won + lost" note="Account scoped." />
           </Link>
 
           <Link href="/dashboard/tasks" className="block">
-            <MetricCard
-              title="Total Tasks"
-              value={fmt(totalTasks)}
-              sub="All tasks in account"
-              note="Account scoped."
-            />
+            <MetricCard title="Total Tasks" value={fmt(totalTasks)} sub="All tasks in account" note="Account scoped." />
           </Link>
 
           <Link href="/admin/users" className="block">
-            <MetricCard
-              title="Total Users"
-              value={fmt(totalUsers)}
-              sub="Users in this account"
-              note="Account scoped."
-            />
+            <MetricCard title="Total Users" value={fmt(totalUsers)} sub="Users in this account" note="Account scoped." />
           </Link>
 
           <Link href="/dashboard/reports/revenue" className="block">
