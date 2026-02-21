@@ -88,6 +88,7 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
   const [presetName, setPresetName] = useState("");
   const [presets, setPresets] = useState<Preset[]>([]);
   const [toast, setToast] = useState<string | null>(null);
+  const [generalOnly, setGeneralOnly] = useState(false);
 
   const [statusWorking, setStatusWorking] = useState<string | null>(null);
 
@@ -143,12 +144,13 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
         if (t.status === "Done") return false;
         if (!isDueSoon(t.due_at, 7)) return false;
       }
+if (generalOnly && t.opportunity_id) return false;
 
       if (!q) return true;
       const hay = `${t.title ?? ""} ${t.description ?? ""} ${t.opportunity_name ?? ""} ${t.assignee_name ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [tasks, search, statuses, projectId, assigneeId, dueSoon, myTasks, viewerId]);
+  }, [tasks, search, statuses, projectId, assigneeId, dueSoon, myTasks, viewerId, generalOnly]);
 
   function applyPreset(p: Preset) {
     setSearch(p.search);
@@ -281,6 +283,7 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
     }
   }
 
+
   return (
     <div>
       {toast ? (
@@ -298,6 +301,17 @@ export default function TasksTable({ role, viewerId, tasks }: Props) {
         <button onClick={() => setQuickPreset("due")} className="shrink-0 rounded-lg border px-3 py-2 text-sm">
           Due Soon
         </button>
+        <button
+  onClick={() => {
+    setGeneralOnly((v) => !v);
+    setToast("Filter: General tasks");
+  }}
+  className={`shrink-0 rounded-lg border px-3 py-2 text-sm ${generalOnly ? "bg-black text-white" : ""}`}
+  type="button"
+>
+  General
+</button>
+
         <button onClick={() => setQuickPreset("all")} className="shrink-0 rounded-lg border px-3 py-2 text-sm">
           All
         </button>

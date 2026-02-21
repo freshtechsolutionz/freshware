@@ -256,9 +256,15 @@ export default async function DashboardHome() {
               Tasks assigned to you across all projects.
             </div>
           </div>
-          <Link href="/dashboard/tasks" className="fw-btn text-sm">
-            Open Tasks
-          </Link>
+          <div className="flex items-center gap-2">
+  <Link href="/dashboard/tasks/new" className="fw-btn text-sm">
+    + Task
+  </Link>
+  <Link href="/dashboard/tasks" className="fw-btn text-sm">
+    Open Tasks
+  </Link>
+</div>
+
         </div>
 
         <div className="mt-5 divide-y divide-black/10 rounded-2xl border bg-white/60">

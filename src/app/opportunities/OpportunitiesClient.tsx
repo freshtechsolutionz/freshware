@@ -45,7 +45,6 @@ type Opportunity = {
   close_date: string | null;
   created_at: string;
 
-  // ✅ added by server page
   last_touch_at?: string | null;
 };
 
@@ -125,14 +124,15 @@ export default function OpportunitiesClient({
   const [openOnly, setOpenOnly] = useState(true);
   const [ownerScope, setOwnerScope] = useState<OwnerScope>("all");
 
-  // ✅ Stuck deals threshold
+  // Stuck deals threshold
   const [staleDays, setStaleDays] = useState<number>(14);
 
   // quick note per row (stuck panel)
   const [noteByOpp, setNoteByOpp] = useState<Record<string, string>>({});
 
   const role = profile?.role ?? "PENDING";
-  const canUpdate = useMemo(() => ["CEO", "ADMIN", "SALES", "OPS"].includes(role), [role]);
+  const roleUpper = (role || "").toUpperCase();
+  const canUpdate = useMemo(() => ["CEO", "ADMIN", "SALES", "OPS"].includes(roleUpper), [roleUpper]);
 
   const usersById = useMemo(() => {
     const m: Record<string, string> = {};
@@ -167,6 +167,45 @@ export default function OpportunitiesClient({
 
     setSavingId(null);
     router.refresh();
+  }
+
+  async function convertToProject(opportunityId: string) {
+    if (!canUpdate) {
+      setRowsError("You do not have permission to convert opportunities to projects.");
+      return;
+    }
+
+    setSavingId(opportunityId);
+    setRowsError(null);
+
+    try {
+      const res = await fetch(`/api/opportunities/${opportunityId}/convert-to-project`, { method: "POST" });
+      const text = await res.text();
+
+      let json: any = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        setRowsError(`Non-JSON response: ${text.slice(0, 150)}`);
+        return;
+      }
+
+      if (!res.ok) {
+        setRowsError(json?.error || "Convert failed");
+        return;
+      }
+
+      if (json?.project_id) {
+        router.push(`/dashboard/projects/${json.project_id}`);
+        return;
+      }
+
+      router.refresh();
+    } catch (e: any) {
+      setRowsError(e?.message || "Convert failed");
+    } finally {
+      setSavingId(null);
+    }
   }
 
   async function logActivity(opportunityId: string, activity_type: "call" | "email" | "meeting" | "note", summary?: string) {
@@ -232,7 +271,6 @@ export default function OpportunitiesClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, search, stageFilter, openOnly, ownerScope, profile.id]);
 
-  // ✅ KPIs (open pipeline)
   const kpis = useMemo(() => {
     let openDeals = 0;
     let openPipeline = 0;
@@ -253,7 +291,6 @@ export default function OpportunitiesClient({
     return { openDeals, openPipeline, openWeighted };
   }, [filteredRows]);
 
-  // ✅ Stuck deals list (NOW uses last_touch_at from activities)
   const stuckDeals = useMemo(() => {
     const now = new Date();
 
@@ -311,7 +348,7 @@ export default function OpportunitiesClient({
         </div>
       )}
 
-      {/* ✅ Stuck Deals */}
+      {/* Stuck Deals */}
       <div className="mt-4 border rounded-md p-3 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -389,11 +426,7 @@ export default function OpportunitiesClient({
                         {canUpdate ? (
                           <div className="flex flex-col gap-2">
                             <div className="flex flex-wrap gap-2">
-                              <button
-                                className="underline"
-                                disabled={savingId === o.id}
-                                onClick={() => logActivity(o.id, "call")}
-                              >
+                              <button className="underline" disabled={savingId === o.id} onClick={() => logActivity(o.id, "call")}>
                                 {savingId === o.id ? "Saving…" : "Call"}
                               </button>
                               <button className="underline" disabled={savingId === o.id} onClick={() => logActivity(o.id, "email")}>
@@ -411,11 +444,7 @@ export default function OpportunitiesClient({
                                 placeholder="Quick note…"
                                 className="border rounded-md p-1 flex-1"
                               />
-                              <button
-                                className="underline"
-                                disabled={savingId === o.id}
-                                onClick={() => logActivity(o.id, "note", noteByOpp[o.id] ?? "")}
-                              >
+                              <button className="underline" disabled={savingId === o.id} onClick={() => logActivity(o.id, "note", noteByOpp[o.id] ?? "")}>
                                 Note
                               </button>
                             </div>
@@ -435,12 +464,7 @@ export default function OpportunitiesClient({
 
       {/* Filters */}
       <div className="mt-4 grid gap-3 md:grid-cols-4">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name or ID"
-          className="border rounded-md p-2"
-        />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or ID" className="border rounded-md p-2" />
 
         <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="border rounded-md p-2">
           <option value="all">All stages</option>
@@ -503,6 +527,9 @@ export default function OpportunitiesClient({
                   : usersById[o.owner_user_id] ?? o.owner_user_id
                 : "Unassigned";
 
+              const stageLower = (o.stage || "").toLowerCase();
+              const isClosed = stageLower === "won" || stageLower === "lost";
+
               return (
                 <tr key={o.id}>
                   <td className="p-2 border-b">
@@ -518,12 +545,7 @@ export default function OpportunitiesClient({
 
                   <td className="p-2 border-b">
                     {canUpdate ? (
-                      <select
-                        value={o.stage ?? "new"}
-                        onChange={(e) => updateOpportunity(o.id, { stage: e.target.value })}
-                        disabled={savingId === o.id}
-                        className="border rounded-md p-1"
-                      >
+                      <select value={o.stage ?? "new"} onChange={(e) => updateOpportunity(o.id, { stage: e.target.value })} disabled={savingId === o.id} className="border rounded-md p-1">
                         {STAGES.map((s) => (
                           <option key={s} value={s}>
                             {s}
@@ -538,7 +560,18 @@ export default function OpportunitiesClient({
                   <td className="p-2 border-b">{money(toNumber(o.amount))}</td>
                   <td className="p-2 border-b">{pct(clampPct(toNumber(o.probability)))}</td>
                   <td className="p-2 border-b">{o.close_date ?? "(none)"}</td>
-                  <td className="p-2 border-b">{savingId === o.id ? "Saving…" : "—"}</td>
+
+                  <td className="p-2 border-b">
+                    {savingId === o.id ? (
+                      "Working…"
+                    ) : !isClosed && canUpdate ? (
+                      <button className="underline" type="button" onClick={() => convertToProject(o.id)}>
+                        Convert → Project
+                      </button>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                 </tr>
               );
             })}
