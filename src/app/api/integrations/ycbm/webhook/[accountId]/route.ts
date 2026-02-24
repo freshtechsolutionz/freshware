@@ -4,39 +4,99 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 
 type Payload = {
-  event?: string; // booking_created, booking_cancelled, etc.
+  event?: string;
+
   external_id?: string;
+  booking_ref?: string;
+
   contact_name?: string;
   contact_email?: string;
-  contact_phone?: string;
+  phone?: string;
+
   start_iso?: string;
   end_iso?: string;
   timeZone?: string;
+
   booking_page?: string;
   event_type?: string;
-  raw?: any; // optional
+
+  description?: string;
+
+  owner_profile_id?: string;
+
   [k: string]: any;
 };
 
-function normEmail(v: any) {
-  return String(v || "").trim().toLowerCase();
+function mustEnv(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`${name} missing`);
+  return v;
 }
 
-function normText(v: any) {
-  const s = String(v || "").trim();
-  return s ? s : null;
+function cleanEmail(v?: string | null) {
+  const e = (v || "").trim().toLowerCase();
+  return e || null;
+}
+
+function cleanText(v?: string | null) {
+  const s = (v || "").trim();
+  return s || null;
+}
+
+function safeIso(v?: string | null) {
+  const s = (v || "").trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+}
+
+function nonNullName(name: string | null, email: string | null) {
+  const n = (name || "").trim();
+  if (n) return n;
+  if (email) return email;
+  return "Unknown";
+}
+
+function splitName(full: string | null): { first: string | null; last: string | null } {
+  const s = (full || "").trim();
+  if (!s) return { first: null, last: null };
+  const parts = s.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return { first: parts[0], last: null };
+  return { first: parts[0], last: parts.slice(1).join(" ") };
+}
+
+// YCBM sometimes posts JSON with text/plain
+async function readBody(req: Request): Promise<any> {
+  const ct = req.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return await req.json();
+  const raw = await req.text();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { _raw: raw };
+  }
 }
 
 export async function POST(req: Request, context: { params: Promise<{ accountId: string }> }) {
+  const now = new Date().toISOString();
+
+  // We'll use these for audit
+  let accountId: string | null = null;
+  let body: any = null;
+  let statusCode = 200;
+  let ok = false;
+  let errorMsg: string | null = null;
+
+  // ✅ IMPORTANT: Use an UN-TYPED client for webhook routes to avoid TS "never" issues
+  const supabase = createClient(mustEnv("NEXT_PUBLIC_SUPABASE_URL"), mustEnv("SUPABASE_SERVICE_ROLE_KEY"));
+
   try {
-    const { accountId } = await context.params;
+    const params = await context.params;
+    accountId = params.accountId;
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    body = (await readBody(req)) as Payload;
 
-    // 1) Look up integration row for this account
+    // 1) Integration lookup
     const { data: integration, error: integErr } = await supabase
       .from("account_integrations")
       .select("webhook_secret,status")
@@ -44,125 +104,182 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
       .eq("provider", "youcanbookme")
       .maybeSingle();
 
-    if (integErr) return NextResponse.json({ error: integErr.message }, { status: 500 });
+    if (integErr) {
+      statusCode = 500;
+      throw new Error(integErr.message);
+    }
     if (!integration || integration.status !== "connected") {
-      return NextResponse.json({ error: "Integration not connected" }, { status: 404 });
+      statusCode = 404;
+      throw new Error("Integration not connected");
     }
 
     // 2) Verify secret
-    const secret = req.headers.get("x-ycbm-secret") || req.headers.get("x-freshware-secret");
+    const secret = req.headers.get("x-ycbm-secret");
     if (!secret || secret !== integration.webhook_secret) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      throw new Error("Unauthorized (x-ycbm-secret mismatch)");
     }
 
-    // 3) Read payload
-    const body = (await req.json()) as Payload;
+    // 3) Normalize payload
+    const email = cleanEmail((body as any).contact_email);
+    const contactName = cleanText((body as any).contact_name);
+    const phone = cleanText((body as any).phone);
 
-    const external_id = normText(body.external_id);
-    const start_iso = normText(body.start_iso);
-    const end_iso = normText(body.end_iso);
-    const email = normEmail(body.contact_email);
+    const startAt = safeIso((body as any).start_iso);
+    const endAt = safeIso((body as any).end_iso);
 
-    if (!external_id || !start_iso) {
-      return NextResponse.json({ error: "Missing external_id or start_iso" }, { status: 400 });
-    }
+    const externalId = cleanText((body as any).external_id);
+    const bookingRef = cleanText((body as any).booking_ref);
+
     if (!email) {
-      return NextResponse.json({ error: "Missing contact_email" }, { status: 400 });
+      statusCode = 400;
+      throw new Error("Missing contact_email");
+    }
+    if (!startAt) {
+      statusCode = 400;
+      throw new Error("Missing start_iso");
     }
 
-    const nowIso = new Date().toISOString();
+    const nameForContacts = nonNullName(contactName, email);
 
-    // 4) Upsert contact (by account_id + email)
-    let contactId: string | null = null;
-
-    const { data: existingContact, error: contactLookupErr } = await supabase
+    // 4) Upsert contact by (account_id + email)
+    const { data: existingContact, error: findErr } = await supabase
       .from("contacts")
       .select("id")
       .eq("account_id", accountId)
       .ilike("email", email)
       .maybeSingle();
 
-    if (contactLookupErr) {
-      return NextResponse.json({ error: contactLookupErr.message }, { status: 500 });
+    if (findErr) {
+      statusCode = 500;
+      throw new Error(findErr.message);
     }
 
-    const contactName = normText(body.contact_name) || email;
+    let contactId: string | null = existingContact?.id ?? null;
 
-    if (!existingContact?.id) {
+    if (!contactId) {
       const { data: inserted, error: insErr } = await supabase
         .from("contacts")
         .insert({
           account_id: accountId,
-          name: contactName,
+          name: nameForContacts,
           email,
-          phone: normText(body.contact_phone),
+          phone,
           source: "youcanbookme",
-          source_ref: external_id,
-          imported_at: nowIso,
-          last_seen_at: nowIso,
+          source_ref: externalId || bookingRef,
+          imported_at: now,
+          last_seen_at: now,
+          owner_profile_id: (body as any).owner_profile_id || null,
         })
         .select("id")
         .single();
 
-      if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+      if (insErr) {
+        statusCode = 400;
+        throw new Error(insErr.message);
+      }
       contactId = inserted.id;
     } else {
-      contactId = existingContact.id;
-
       const { error: updErr } = await supabase
         .from("contacts")
         .update({
-          name: contactName,
-          phone: normText(body.contact_phone),
+          name: nameForContacts,
+          phone,
           source: "youcanbookme",
-          source_ref: external_id,
-          last_seen_at: nowIso,
+          source_ref: externalId || bookingRef,
+          last_seen_at: now,
+          owner_profile_id: (body as any).owner_profile_id || null,
         })
         .eq("id", contactId);
 
-      if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+      if (updErr) {
+        statusCode = 400;
+        throw new Error(updErr.message);
+      }
     }
 
-    // 5) Upsert meeting (and link contact_id)
+    // 5) Upsert meeting
+    const meetingExternalId = externalId || bookingRef;
+    if (!meetingExternalId) {
+      statusCode = 400;
+      throw new Error("Missing external_id/booking_ref");
+    }
+
     const status =
-      body.event === "booking_cancelled" || body.event === "booking_canceled"
+      (body as any).event === "booking_cancelled"
         ? "canceled"
-        : "scheduled";
+        : (body as any).event === "booking_rescheduled"
+          ? "rescheduled"
+          : "scheduled";
 
-    const meetingRow: any = {
-      external_id,
-      account_id: accountId,
-      status,
-      source: "youcanbookme",
-      scheduled_at: start_iso,
+    const { first, last } = splitName(contactName);
 
-      // these columns exist in your meetings table
-      start_at: start_iso,
-      end_at: end_iso,
-      timezone: normText(body.timeZone),
-      booking_page: normText(body.booking_page),
-      event_type: normText(body.event_type),
-
-      contact_name: contactName,
-      contact_email: email,
-
-      // you also have these duplicate-ish columns:
-      email,
-      phone: normText(body.contact_phone),
-
-      booked_at: nowIso,
-      contact_id: contactId,
-      raw: body, // store everything so we can render extra booking form answers later
-    };
-
-    const { error: meetErr } = await supabase
+    const { error: meetingErr } = await supabase
       .from("meetings")
-      .upsert(meetingRow, { onConflict: "external_id" });
+      .upsert(
+        {
+          external_id: meetingExternalId,
+          account_id: accountId,
 
-    if (meetErr) return NextResponse.json({ error: meetErr.message }, { status: 500 });
+          contact_email: email,
+          contact_name: contactName || nameForContacts,
+          scheduled_at: startAt,
 
-    return NextResponse.json({ ok: true, contact_id: contactId });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message || "Server error" }, { status: 500 });
+          status,
+          source: "youcanbookme",
+
+          booked_at: now,
+          start_at: startAt,
+          end_at: endAt,
+          timezone: cleanText((body as any).timeZone),
+
+          booking_id: externalId,
+          booking_ref: bookingRef,
+          booking_page: cleanText((body as any).booking_page),
+          event_type: cleanText((body as any).event_type),
+
+          first_name: first,
+          last_name: last,
+          email,
+          phone,
+
+          description: cleanText((body as any).description),
+
+          raw: body,
+
+          contact_id: contactId,
+          owner_profile_id: (body as any).owner_profile_id || null,
+        },
+        { onConflict: "external_id" }
+      );
+
+    if (meetingErr) {
+      statusCode = 500;
+      throw new Error(meetingErr.message);
+    }
+
+    ok = true;
+    return NextResponse.json({ ok: true, account_id: accountId, contact_id: contactId, external_id: meetingExternalId });
+  } catch (e: any) {
+    errorMsg = e?.message || "Server error";
+    return NextResponse.json({ ok: false, error: errorMsg }, { status: statusCode || 500 });
+  } finally {
+    // Audit log (best effort)
+    try {
+      const headersObj: Record<string, string> = {};
+      req.headers.forEach((v, k) => (headersObj[k] = v));
+
+      await supabase.from("webhook_audit").insert({
+        source: "youcanbookme",
+        account_id: accountId,
+        ok,
+        status_code: statusCode,
+        error: errorMsg,
+        headers: headersObj,
+        body,
+      });
+    } catch {
+      // ignore
+    }
   }
 }
