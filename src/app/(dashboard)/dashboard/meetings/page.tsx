@@ -1,26 +1,35 @@
 import PageHeader from "@/components/dashboard/PageHeader";
-import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createServerClient } from "@supabase/ssr";
+import MeetingsClient from "./MeetingsClient";
 
 export const runtime = "nodejs";
 
-type Meeting = {
+export type MeetingRow = {
   id: string;
   contact_name: string | null;
   contact_email: string | null;
   scheduled_at: string | null;
+  start_at: string | null;
+  end_at: string | null;
   status: string | null;
   source: string | null;
   description: string | null;
+
+  meeting_summary: string | null;
+  notes: string | null;
+  meeting_link: string | null;
+
+  external_id: string | null;
+  booking_page: string | null;
+  event_type: string | null;
+
+  opportunity_id: string | null;
+  contact_id: string | null;
+
   created_at: string | null;
 };
-
-function fmtWhen(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-US", { timeZone: "America/Chicago" }) + " CT";
-}
 
 function rangeLabel(r: string) {
   if (r === "today") return "Today";
@@ -48,7 +57,6 @@ export default async function MeetingsPage({
 
   const range = (searchParams?.range || "").toLowerCase(); // today | week | 7 | 30 | ""
 
-  // Account-scoped meetings
   const { data: profile } = await supabase
     .from("profiles")
     .select("account_id")
@@ -75,7 +83,7 @@ export default async function MeetingsPage({
     since = start.toISOString();
   } else if (range === "week") {
     const day = start.getDay(); // 0 Sun
-    const mondayDelta = (day === 0 ? -6 : 1 - day);
+    const mondayDelta = day === 0 ? -6 : 1 - day;
     const monday = new Date(start);
     monday.setDate(start.getDate() + mondayDelta);
     since = monday.toISOString();
@@ -91,7 +99,9 @@ export default async function MeetingsPage({
 
   let q = supabase
     .from("meetings")
-    .select("id,contact_name,contact_email,scheduled_at,status,source,description,created_at")
+    .select(
+      "id,contact_name,contact_email,scheduled_at,start_at,end_at,status,source,description,meeting_summary,notes,meeting_link,external_id,booking_page,event_type,opportunity_id,contact_id,created_at"
+    )
     .eq("account_id", profile.account_id)
     .order("scheduled_at", { ascending: false });
 
@@ -110,79 +120,13 @@ export default async function MeetingsPage({
     );
   }
 
-  const meetings = (data || []) as Meeting[];
+  const meetings = (data || []) as MeetingRow[];
 
   return (
-    <>
-      <div className="flex items-start justify-between gap-4">
-        <PageHeader title="Meetings" subtitle="Scheduled calls, demos, and follow-ups." />
-        <div className="flex flex-wrap gap-2">
-          {[
-            { r: "", label: "All" },
-            { r: "today", label: "Today" },
-            { r: "week", label: "This week" },
-            { r: "7", label: "Last 7 days" },
-            { r: "30", label: "Last 30 days" },
-          ].map((x) => (
-            <Link
-              key={x.label}
-              href={`/dashboard/meetings${x.r ? `?range=${x.r}` : ""}`}
-              className={`rounded-2xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 ${
-                (range || "") === x.r ? "ring-1 ring-black/10" : ""
-              }`}
-            >
-              {x.label}
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      <div className="rounded-2xl border bg-background p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm text-gray-600">
-            Showing: <span className="font-semibold text-gray-900">{rangeLabel(range)}</span> ·{" "}
-            <span className="font-semibold text-gray-900">{meetings.length}</span> meetings
-          </div>
-        </div>
-
-        <div className="overflow-auto rounded-2xl border bg-white">
-          <table className="min-w-[900px] w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr className="text-left">
-                <th className="p-3 font-semibold">Meeting Date/Time</th>
-                <th className="p-3 font-semibold">Contact</th>
-                <th className="p-3 font-semibold">Email</th>
-                <th className="p-3 font-semibold">Status</th>
-                <th className="p-3 font-semibold">Source</th>
-                <th className="p-3 font-semibold">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              {meetings.map((m) => (
-                <tr key={m.id} className="border-t">
-                  <td className="p-3 whitespace-nowrap">{fmtWhen(m.scheduled_at)}</td>
-                  <td className="p-3">{m.contact_name || "—"}</td>
-                  <td className="p-3">{m.contact_email || "—"}</td>
-                  <td className="p-3">{m.status || "—"}</td>
-                  <td className="p-3">{m.source || "—"}</td>
-                  <td className="p-3">{m.description || "—"}</td>
-                </tr>
-              ))}
-              {!meetings.length ? (
-                <tr className="border-t">
-                  <td className="p-4 text-gray-600" colSpan={6}>
-                    No meetings found for this filter.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-3 text-xs text-gray-500">
-          Note: YCBM bookings can still land here via webhook. Manual meetings can include description.
-        </div>
-      </div>
-    </>
+    <MeetingsClient
+      range={range}
+      rangeLabel={rangeLabel(range)}
+      meetings={meetings}
+    />
   );
 }
