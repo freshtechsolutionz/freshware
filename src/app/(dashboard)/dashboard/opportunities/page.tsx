@@ -1,5 +1,5 @@
 import PageHeader from "@/components/dashboard/PageHeader";
-import OpportunitiesTable from "@/components/OpportunitiesTable";
+import OpportunitiesInsights from "@/components/OpportunitiesInsights";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createServerClient } from "@supabase/ssr";
@@ -96,10 +96,7 @@ export default async function OpportunitiesPage() {
   return (
     <>
       <PageHeader title="Opportunities" subtitle="Track pipeline, activity, and next steps." />
-
-      <div className="rounded-2xl border bg-background p-4 shadow-sm">
-        <OpportunitiesTable role={role} opportunities={opportunities} accountsMap={accountsMap} contactsMap={contactsMap} />
-      </div>
+      <OpportunitiesInsights role={role} opportunities={opportunities as any} accountsMap={accountsMap} contactsMap={contactsMap} />
     </>
   );
 }

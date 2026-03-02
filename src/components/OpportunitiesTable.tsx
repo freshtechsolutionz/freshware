@@ -66,8 +66,9 @@ export default function OpportunitiesTable({ role, opportunities, accountsMap, c
   const [savingId, setSavingId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
 
-  const canCreate = ["CEO", "ADMIN", "SALES"].includes(role);
-  const canManage = ["CEO", "ADMIN"].includes(role);
+  const roleU = (role || "").toUpperCase();
+const canCreate = ["CEO", "ADMIN", "SALES"].includes(roleU);
+const canManage = ["CEO", "ADMIN"].includes(roleU);
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();

@@ -10,6 +10,10 @@ function fmtWhen(iso: string | null) {
   return new Date(iso).toLocaleString("en-US", { timeZone: "America/Chicago" }) + " CT";
 }
 
+function toggle(arr: string[], v: string) {
+  return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
+}
+
 export default function MeetingsClient({
   range,
   rangeLabel,
@@ -22,10 +26,12 @@ export default function MeetingsClient({
   const router = useRouter();
 
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<string>("all");
-  const [source, setSource] = useState<string>("all");
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // multi-select filters (requested)
+  const [statuses, setStatuses] = useState<string[]>([]); // [] = all
+  const [sources, setSources] = useState<string[]>([]); // [] = all
 
   // Manual create form
   const [mName, setMName] = useState("");
@@ -35,11 +41,33 @@ export default function MeetingsClient({
   const [mLink, setMLink] = useState("");
   const [mSummary, setMSummary] = useState("");
 
+  const availableStatuses = useMemo(() => {
+    const set = new Set<string>();
+    (meetings || []).forEach((m) => {
+      const s = (m.status || "").toLowerCase().trim();
+      if (s) set.add(s);
+    });
+    return Array.from(set).sort();
+  }, [meetings]);
+
+  const availableSources = useMemo(() => {
+    const set = new Set<string>();
+    (meetings || []).forEach((m) => {
+      const s = (m.source || "").toLowerCase().trim();
+      if (s) set.add(s);
+    });
+    return Array.from(set).sort();
+  }, [meetings]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return meetings.filter((m) => {
-      if (status !== "all" && (m.status || "").toLowerCase() !== status) return false;
-      if (source !== "all" && (m.source || "").toLowerCase() !== source) return false;
+
+    return (meetings || []).filter((m) => {
+      const st = (m.status || "").toLowerCase();
+      const src = (m.source || "").toLowerCase();
+
+      if (statuses.length && !statuses.includes(st)) return false;
+      if (sources.length && !sources.includes(src)) return false;
 
       if (!q) return true;
 
@@ -48,8 +76,11 @@ export default function MeetingsClient({
         m.contact_email,
         m.description,
         m.meeting_summary,
+        m.notes,
         m.meeting_link,
         m.external_id,
+        m.event_type,
+        m.booking_page,
       ]
         .filter(Boolean)
         .join(" ")
@@ -57,7 +88,7 @@ export default function MeetingsClient({
 
       return hay.includes(q);
     });
-  }, [meetings, search, status, source]);
+  }, [meetings, search, statuses, sources]);
 
   async function createManualMeeting() {
     setErr(null);
@@ -68,7 +99,6 @@ export default function MeetingsClient({
       return;
     }
 
-    setCreating(true);
     try {
       const res = await fetch("/api/meetings/manual", {
         method: "POST",
@@ -87,7 +117,6 @@ export default function MeetingsClient({
 
       if (!res.ok) {
         setErr(json?.error || `Failed (${res.status})`);
-        setCreating(false);
         return;
       }
 
@@ -98,18 +127,18 @@ export default function MeetingsClient({
       setMWhen("");
       setMLink("");
       setMSummary("");
+      setCreating(false);
 
       router.refresh();
     } catch (e: any) {
       setErr(e?.message || "Failed to create meeting.");
-    } finally {
-      setCreating(false);
     }
   }
 
   return (
-    <>
-      <div className="flex items-start justify-between gap-4">
+    <div className="pb-24 md:pb-6">
+      {/* Header */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
           <div className="text-2xl font-semibold">Meetings</div>
           <div className="text-sm text-gray-600">Scheduled calls, demos, and follow-ups.</div>
@@ -135,6 +164,7 @@ export default function MeetingsClient({
           ))}
 
           <button
+            type="button"
             className="rounded-2xl border bg-black px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
             onClick={() => setCreating((v) => !v)}
           >
@@ -149,6 +179,7 @@ export default function MeetingsClient({
         </div>
       ) : null}
 
+      {/* Manual Create */}
       {creating ? (
         <div className="mt-4 rounded-2xl border bg-white p-4 shadow-sm">
           <div className="font-semibold">Create Manual Meeting</div>
@@ -192,15 +223,16 @@ export default function MeetingsClient({
             />
           </div>
 
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <button
+              type="button"
               className="rounded-2xl border bg-black px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
               onClick={createManualMeeting}
-              disabled={false}
             >
               Save
             </button>
             <button
+              type="button"
               className="rounded-2xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50"
               onClick={() => setCreating(false)}
             >
@@ -210,35 +242,153 @@ export default function MeetingsClient({
         </div>
       ) : null}
 
+      {/* Filters */}
       <div className="mt-4 rounded-2xl border bg-background p-4 shadow-sm">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="text-sm text-gray-600">
             Showing: <span className="font-semibold text-gray-900">{rangeLabel}</span> ·{" "}
             <span className="font-semibold text-gray-900">{filtered.length}</span> meetings
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <input
-              className="rounded-xl border p-2 text-sm"
-              placeholder="Search (name/email/summary/link)"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <select className="rounded-xl border p-2 text-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="all">All status</option>
-              <option value="scheduled">scheduled</option>
-              <option value="canceled">canceled</option>
-              <option value="completed">completed</option>
-            </select>
-            <select className="rounded-xl border p-2 text-sm" value={source} onChange={(e) => setSource(e.target.value)}>
-              <option value="all">All sources</option>
-              <option value="youcanbookme">youcanbookme</option>
-              <option value="manual">manual</option>
-            </select>
+          <input
+            className="w-full rounded-xl border p-2 text-sm md:w-[360px]"
+            placeholder="Search (name/email/summary/link)"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-2xl border bg-white p-3">
+            <div className="text-sm font-semibold">Status</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {availableStatuses.length ? (
+                availableStatuses.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setStatuses((cur) => toggle(cur, s))}
+                    className={[
+                      "rounded-full border px-3 py-1 text-sm",
+                      statuses.includes(s) ? "bg-black text-white" : "bg-white",
+                    ].join(" ")}
+                  >
+                    {s}
+                  </button>
+                ))
+              ) : (
+                <div className="text-sm text-gray-500">No status values found.</div>
+              )}
+
+              {statuses.length ? (
+                <button
+                  type="button"
+                  className="rounded-full border px-3 py-1 text-sm text-gray-700"
+                  onClick={() => setStatuses([])}
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-white p-3">
+            <div className="text-sm font-semibold">Source</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {availableSources.length ? (
+                availableSources.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSources((cur) => toggle(cur, s))}
+                    className={[
+                      "rounded-full border px-3 py-1 text-sm",
+                      sources.includes(s) ? "bg-black text-white" : "bg-white",
+                    ].join(" ")}
+                  >
+                    {s}
+                  </button>
+                ))
+              ) : (
+                <div className="text-sm text-gray-500">No source values found.</div>
+              )}
+
+              {sources.length ? (
+                <button
+                  type="button"
+                  className="rounded-full border px-3 py-1 text-sm text-gray-700"
+                  onClick={() => setSources([])}
+                >
+                  Clear
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
 
-        <div className="overflow-auto rounded-2xl border bg-white">
+        {/* MOBILE: cards */}
+        <div className="mt-4 space-y-3 md:hidden">
+          {filtered.map((m) => {
+            const when = fmtWhen(m.scheduled_at || m.start_at);
+            const subtitle = m.meeting_summary || m.description || "—";
+            return (
+              <div key={m.id} className="rounded-2xl border bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/dashboard/meetings/${m.id}`}
+                      className="block truncate text-sm font-semibold underline underline-offset-2"
+                    >
+                      {when}
+                    </Link>
+                    <div className="mt-1 truncate text-base font-semibold">
+                      {m.contact_name || "—"}
+                    </div>
+                    <div className="truncate text-sm text-gray-600">{m.contact_email || "—"}</div>
+                  </div>
+
+                  <div className="shrink-0 text-right text-xs text-gray-600">
+                    <div className="rounded-full border px-2 py-1">{m.status || "—"}</div>
+                    <div className="mt-2 rounded-full border px-2 py-1">{m.source || "—"}</div>
+                  </div>
+                </div>
+
+                <div className="mt-3 text-sm text-gray-800">
+                  <div className="line-clamp-3">{subtitle}</div>
+                </div>
+
+                <div className="mt-3 flex gap-3">
+                  <Link
+                    href={`/dashboard/meetings/${m.id}`}
+                    className="rounded-xl border px-3 py-2 text-sm font-semibold"
+                  >
+                    Open
+                  </Link>
+
+                  {m.meeting_link ? (
+                    <a
+                      className="rounded-xl border px-3 py-2 text-sm font-semibold"
+                      href={m.meeting_link}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Link
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+
+          {!filtered.length ? (
+            <div className="rounded-2xl border bg-white p-4 text-sm text-gray-600">
+              No meetings found for this filter.
+            </div>
+          ) : null}
+        </div>
+
+        {/* DESKTOP: table */}
+        <div className="mt-4 hidden overflow-auto rounded-2xl border bg-white md:block">
           <table className="min-w-[1100px] w-full text-sm">
             <thead className="bg-gray-50">
               <tr className="text-left">
@@ -284,10 +434,7 @@ export default function MeetingsClient({
 
                   <td className="p-3">
                     {m.opportunity_id ? (
-                      <Link
-                        className="underline"
-                        href={`/dashboard/opportunities/${m.opportunity_id}/meetings`}
-                      >
+                      <Link className="underline" href={`/dashboard/opportunities/${m.opportunity_id}/meetings`}>
                         View
                       </Link>
                     ) : (
@@ -312,6 +459,6 @@ export default function MeetingsClient({
           Tip: Click a meeting date/time to open details, add notes, and see the summary + link.
         </div>
       </div>
-    </>
+    </div>
   );
 }

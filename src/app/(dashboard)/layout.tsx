@@ -1,5 +1,6 @@
 import Topbar from "@/components/dashboard/Topbar";
 import CommandPalette from "@/components/dashboard/CommandPalette";
+import MobileBottomNav from "@/components/MobileBottomNav";
 
 export default function DashboardLayout({
   children,
@@ -25,7 +26,10 @@ export default function DashboardLayout({
             `,
           }}
         />
+        <MobileBottomNav />
+<div className="h-14 md:hidden" />
       </main>
     </div>
+    
   );
 }
