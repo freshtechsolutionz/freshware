@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+
+export async function GET() {
+  return NextResponse.json({ ok: true, route: "email-summary" }, { status: 200 });
+}
+
 export const runtime = "nodejs";
 
 function mustEnv(name: string) {
