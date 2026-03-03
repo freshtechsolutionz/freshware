@@ -4,20 +4,27 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import PageHeader from "@/components/dashboard/PageHeader";
-import { SALES_STAGES, SERVICE_LINES, formatServiceLine } from "@/lib/salesConfig";
+import {
+  SALES_STAGES,
+  SERVICE_LINES,
+  formatServiceLine,
+  STAGE_PROBABILITY,
+  type SalesStage,
+  type ServiceLine,
+} from "@/lib/salesConfig";
 
 type FormState = {
   name: string;
-  stage: string;
-  serviceLine: string;
+  stage: SalesStage;
+  serviceLine: ServiceLine;
   amount: string; // keep as string for input control
 };
 
 export default function NewOpportunityForm() {
   const router = useRouter();
 
-  const defaultStage = useMemo(() => SALES_STAGES?.[0] || "new", []);
-  const defaultService = useMemo(() => SERVICE_LINES?.[0] || "", []);
+  const defaultStage = useMemo(() => (SALES_STAGES?.[0] || "new") as SalesStage, []);
+  const defaultService = useMemo(() => (SERVICE_LINES?.[0] || "apps") as ServiceLine, []);
 
   const [form, setForm] = useState<FormState>({
     name: "",
@@ -42,18 +49,7 @@ export default function NewOpportunityForm() {
     const serviceLine = form.serviceLine;
     const amount = form.amount.trim();
 
-    if (!name) {
-      setError("Please enter an opportunity name.");
-      return;
-    }
-    if (!stage) {
-      setError("Please choose a stage.");
-      return;
-    }
-    if (!serviceLine) {
-      setError("Please choose a service line.");
-      return;
-    }
+    if (!name) return setError("Please enter an opportunity name.");
 
     setSubmitting(true);
     try {
@@ -65,18 +61,17 @@ export default function NewOpportunityForm() {
           stage,
           serviceLine,
           amount: amount === "" ? 0 : Number(amount),
+          // Do NOT send probability here—let the DB trigger handle it
         }),
       });
 
       const json = await res.json().catch(() => ({}));
-
       if (!res.ok) {
         setError(json?.error || "Failed to create opportunity.");
         setSubmitting(false);
         return;
       }
 
-      // Success: go back to dashboard list
       router.push("/dashboard/opportunities");
       router.refresh();
     } catch (err: any) {
@@ -84,6 +79,8 @@ export default function NewOpportunityForm() {
       setSubmitting(false);
     }
   }
+
+  const suggestedProb = STAGE_PROBABILITY[form.stage];
 
   return (
     <div>
@@ -115,7 +112,7 @@ export default function NewOpportunityForm() {
               <label className="text-sm font-medium">Stage</label>
               <select
                 value={form.stage}
-                onChange={(e) => setField("stage", e.target.value)}
+                onChange={(e) => setField("stage", e.target.value as SalesStage)}
                 className="w-full rounded-lg border px-3 py-2 text-sm"
               >
                 {SALES_STAGES.map((s) => (
@@ -124,13 +121,16 @@ export default function NewOpportunityForm() {
                   </option>
                 ))}
               </select>
+              <div className="text-xs text-muted-foreground">
+                Suggested probability for this stage: <b>{suggestedProb}%</b>
+              </div>
             </div>
 
             <div className="space-y-1">
               <label className="text-sm font-medium">Service line</label>
               <select
                 value={form.serviceLine}
-                onChange={(e) => setField("serviceLine", e.target.value)}
+                onChange={(e) => setField("serviceLine", e.target.value as ServiceLine)}
                 className="w-full rounded-lg border px-3 py-2 text-sm"
               >
                 {SERVICE_LINES.map((s) => (
@@ -151,9 +151,7 @@ export default function NewOpportunityForm() {
               inputMode="numeric"
               className="w-full rounded-lg border px-3 py-2 text-sm"
             />
-            <div className="text-xs text-muted-foreground">
-              Leave blank to default to 0.
-            </div>
+            <div className="text-xs text-muted-foreground">Leave blank to default to 0.</div>
           </div>
 
           {error ? (
@@ -171,10 +169,7 @@ export default function NewOpportunityForm() {
               {submitting ? "Creating..." : "Create opportunity"}
             </button>
 
-            <Link
-              href="/dashboard/opportunities"
-              className="rounded-lg border px-4 py-2 text-sm"
-            >
+            <Link href="/dashboard/opportunities" className="rounded-lg border px-4 py-2 text-sm">
               Cancel
             </Link>
           </div>

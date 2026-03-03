@@ -3,7 +3,14 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import OpportunitiesTable from "@/components/OpportunitiesTable";
-import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import {
+  PieChart,
+  Pie,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+  Legend,
+} from "recharts";
 
 type Opportunity = {
   id: string;
@@ -19,8 +26,24 @@ type Opportunity = {
 type Account = { id: string; name: string | null };
 type Contact = { id: string; name: string | null; email: string | null };
 
+const FW_COLORS = [
+  "#2563EB", // blue
+  "#16A34A", // green
+  "#F59E0B", // amber
+  "#EF4444", // red
+  "#A855F7", // purple
+  "#06B6D4", // cyan
+  "#F97316", // orange
+  "#14B8A6", // teal
+  "#64748B", // slate
+];
+
 function money(n: number) {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  return n.toLocaleString(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
 }
 
 function uniq(arr: (string | null | undefined)[]) {
@@ -29,6 +52,44 @@ function uniq(arr: (string | null | undefined)[]) {
 
 function toggle(arr: string[], v: string) {
   return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
+}
+
+function pct(part: number, total: number) {
+  if (!total) return "0%";
+  return `${Math.round((part / total) * 100)}%`;
+}
+
+function prettyLabel(s: string) {
+  // proposal -> Proposal, custom_software -> Custom Software
+  return (s || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function groupTinySlices<T extends { name: string; value: number; count: number }>(
+  rows: T[],
+  total: number,
+  minPct = 0.03
+) {
+  if (!rows.length) return rows;
+  const threshold = total * minPct;
+
+  const major = rows.filter((r) => r.value >= threshold);
+  const minor = rows.filter((r) => r.value < threshold);
+
+  if (!minor.length) return rows;
+
+  const otherValue = minor.reduce((s, r) => s + r.value, 0);
+  const otherCount = minor.reduce((s, r) => s + r.count, 0);
+
+  return [
+    ...major,
+    {
+      name: "other",
+      value: otherValue,
+      count: otherCount,
+    } as T,
+  ];
 }
 
 export default function OpportunitiesInsights({
@@ -77,13 +138,8 @@ export default function OpportunitiesInsights({
       });
     }
 
-    if (stages.length) {
-      out = out.filter((o) => o.stage && stages.includes(o.stage));
-    }
-
-    if (serviceLines.length) {
-      out = out.filter((o) => o.service_line && serviceLines.includes(o.service_line));
-    }
+    if (stages.length) out = out.filter((o) => o.stage && stages.includes(o.stage));
+    if (serviceLines.length) out = out.filter((o) => o.service_line && serviceLines.includes(o.service_line));
 
     out.sort((a, b) => {
       const da = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -96,7 +152,7 @@ export default function OpportunitiesInsights({
 
   const total = useMemo(() => filtered.reduce((s, o) => s + Number(o.amount || 0), 0), [filtered]);
 
-  const byStage = useMemo(() => {
+  const byStageRaw = useMemo(() => {
     const map = new Map<string, { name: string; value: number; count: number }>();
     for (const o of filtered) {
       const k = o.stage || "unknown";
@@ -109,7 +165,7 @@ export default function OpportunitiesInsights({
     return Array.from(map.values()).sort((a, b) => b.value - a.value);
   }, [filtered]);
 
-  const byServiceLine = useMemo(() => {
+  const byServiceLineRaw = useMemo(() => {
     const map = new Map<string, { name: string; value: number; count: number }>();
     for (const o of filtered) {
       const k = o.service_line || "unspecified";
@@ -121,6 +177,39 @@ export default function OpportunitiesInsights({
     }
     return Array.from(map.values()).sort((a, b) => b.value - a.value);
   }, [filtered]);
+
+  const byStage = useMemo(() => groupTinySlices(byStageRaw, total, 0.03), [byStageRaw, total]);
+  const byServiceLine = useMemo(() => groupTinySlices(byServiceLineRaw, total, 0.03), [byServiceLineRaw, total]);
+
+  const donutLabel = (props: any) => {
+    // always-visible labels (but only for slices >= 6%)
+    const { cx, cy, midAngle, innerRadius, outerRadius, percent, name, value } = props;
+    if (!percent || percent < 0.06) return "";
+
+    const RADIAN = Math.PI / 180;
+    const r = innerRadius + (outerRadius - innerRadius) * 0.60;
+    const x = cx + r * Math.cos(-midAngle * RADIAN);
+    const y = cy + r * Math.sin(-midAngle * RADIAN);
+
+    return (
+      <text
+        x={x}
+        y={y}
+        textAnchor="middle"
+        dominantBaseline="central"
+        className="fill-white"
+        style={{
+          fontSize: 12,
+          fontWeight: 800,
+          paintOrder: "stroke",
+          stroke: "rgba(0,0,0,0.35)",
+          strokeWidth: 4,
+        }}
+      >
+        {`${prettyLabel(name)} • ${Math.round(percent * 100)}% • ${money(Number(value || 0))}`}
+      </text>
+    );
+  };
 
   return (
     <div className="space-y-3">
@@ -139,12 +228,19 @@ export default function OpportunitiesInsights({
             onChange={(e) => setQ(e.target.value)}
           />
 
-          <select className="rounded-xl border px-3 py-2 text-sm" value={sort} onChange={(e) => setSort(e.target.value as any)}>
+          <select
+            className="rounded-xl border px-3 py-2 text-sm"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as any)}
+          >
             <option value="newest">Newest → Oldest</option>
             <option value="oldest">Oldest → Newest</option>
           </select>
 
-          <Link href="/dashboard/opportunities/new" className="rounded-xl border bg-black px-4 py-2 text-center text-sm font-semibold text-white">
+          <Link
+            href="/dashboard/opportunities/new"
+            className="rounded-xl border bg-black px-4 py-2 text-center text-sm font-semibold text-white"
+          >
             + New Opportunity
           </Link>
         </div>
@@ -165,11 +261,15 @@ export default function OpportunitiesInsights({
                   stages.includes(s) ? "bg-black text-white" : "bg-white",
                 ].join(" ")}
               >
-                {s}
+                {prettyLabel(s)}
               </button>
             ))}
             {stages.length ? (
-              <button type="button" className="rounded-full border px-3 py-1 text-sm text-gray-700" onClick={() => setStages([])}>
+              <button
+                type="button"
+                className="rounded-full border px-3 py-1 text-sm text-gray-700"
+                onClick={() => setStages([])}
+              >
                 Clear
               </button>
             ) : null}
@@ -189,11 +289,15 @@ export default function OpportunitiesInsights({
                   serviceLines.includes(s) ? "bg-black text-white" : "bg-white",
                 ].join(" ")}
               >
-                {s}
+                {prettyLabel(s)}
               </button>
             ))}
             {serviceLines.length ? (
-              <button type="button" className="rounded-full border px-3 py-1 text-sm text-gray-700" onClick={() => setServiceLines([])}>
+              <button
+                type="button"
+                className="rounded-full border px-3 py-1 text-sm text-gray-700"
+                onClick={() => setServiceLines([])}
+              >
                 Clear
               </button>
             ) : null}
@@ -203,54 +307,189 @@ export default function OpportunitiesInsights({
 
       {/* Charts */}
       <div className="grid gap-3 md:grid-cols-2">
+        {/* Stage chart */}
         <div className="rounded-2xl border bg-white p-4">
-          <div className="text-sm font-semibold">Opportunities by Stage (Total $)</div>
-          <div className="text-xs text-gray-600">Tap a slice to toggle that stage filter.</div>
-          <div className="mt-3 h-72">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">Opportunities by Stage</div>
+              <div className="text-xs text-gray-600">Tap a slice to toggle that stage filter.</div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-gray-500">Stage total</div>
+              <div className="text-sm font-semibold">{money(byStage.reduce((s, x) => s + x.value, 0))}</div>
+            </div>
+          </div>
+
+          <div className="mt-3 h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
+                <defs>
+                  <filter id="fwShadow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="5" stdDeviation="7" floodOpacity="0.18" />
+                  </filter>
+                </defs>
+
                 <Pie
                   data={byStage}
                   dataKey="value"
                   nameKey="name"
+                  innerRadius="52%"
+                  outerRadius="88%"
+                  paddingAngle={2}
+                  cornerRadius={12}
+                  labelLine={false}
+                  label={donutLabel}
+                  style={{ filter: "url(#fwShadow)" }}
                   onClick={(d: any) => d?.name && setStages((cur) => toggle(cur, d.name))}
                 >
-                  {byStage.map((_, idx) => (
-                    <Cell key={idx} />
+                  {byStage.map((row, idx) => (
+                    <Cell
+                      key={idx}
+                      fill={FW_COLORS[idx % FW_COLORS.length]}
+                      stroke="#ffffff"
+                      strokeWidth={2}
+                    />
                   ))}
                 </Pie>
-                <Tooltip formatter={(v: any) => money(Number(v || 0))} />
+
+                <Tooltip
+                  formatter={(v: any, name: any, ctx: any) => {
+                    const val = Number(v || 0);
+                    const payload = ctx?.payload || {};
+                    const c = payload.count || 0;
+                    return [`${money(val)} • ${c} opp`, prettyLabel(payload.name || name)];
+                  }}
+                  contentStyle={{
+                    borderRadius: 14,
+                    border: "1px solid rgba(0,0,0,0.08)",
+                    boxShadow: "0 10px 30px rgba(0,0,0,0.10)",
+                  }}
+                  itemStyle={{ fontWeight: 700 }}
+                  labelStyle={{ fontWeight: 800 }}
+                />
+
+                <Legend
+                  verticalAlign="bottom"
+                  height={24}
+                  formatter={(value: any) => (
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>{prettyLabel(value)}</span>
+                  )}
+                />
               </PieChart>
             </ResponsiveContainer>
           </div>
+
+          {/* Always-visible breakdown (no hover needed) */}
+          <div className="mt-2 grid gap-2">
+            {byStage.slice(0, 8).map((x, i) => (
+              <div key={x.name} className="flex items-center justify-between text-sm">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: FW_COLORS[i % FW_COLORS.length] }} />
+                  <span className="truncate font-semibold">{prettyLabel(x.name)}</span>
+                  <span className="text-xs text-gray-500">{pct(x.value, total)}</span>
+                </div>
+                <div className="font-semibold">{money(x.value)}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
+        {/* Service line chart */}
         <div className="rounded-2xl border bg-white p-4">
-          <div className="text-sm font-semibold">Opportunities by Project Type (service_line) (Total $)</div>
-          <div className="text-xs text-gray-600">Tap a slice to toggle that type filter.</div>
-          <div className="mt-3 h-72">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">Opportunities by Project Type</div>
+              <div className="text-xs text-gray-600">Tap a slice to toggle that type filter.</div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-gray-500">Type total</div>
+              <div className="text-sm font-semibold">{money(byServiceLine.reduce((s, x) => s + x.value, 0))}</div>
+            </div>
+          </div>
+
+          <div className="mt-3 h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
+                <defs>
+                  <filter id="fwShadow2" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="5" stdDeviation="7" floodOpacity="0.18" />
+                  </filter>
+                </defs>
+
                 <Pie
                   data={byServiceLine}
                   dataKey="value"
                   nameKey="name"
+                  innerRadius="52%"
+                  outerRadius="88%"
+                  paddingAngle={2}
+                  cornerRadius={12}
+                  labelLine={false}
+                  label={donutLabel}
+                  style={{ filter: "url(#fwShadow2)" }}
                   onClick={(d: any) => d?.name && setServiceLines((cur) => toggle(cur, d.name))}
                 >
-                  {byServiceLine.map((_, idx) => (
-                    <Cell key={idx} />
+                  {byServiceLine.map((row, idx) => (
+                    <Cell
+                      key={idx}
+                      fill={FW_COLORS[idx % FW_COLORS.length]}
+                      stroke="#ffffff"
+                      strokeWidth={2}
+                    />
                   ))}
                 </Pie>
-                <Tooltip formatter={(v: any) => money(Number(v || 0))} />
+
+                <Tooltip
+                  formatter={(v: any, name: any, ctx: any) => {
+                    const val = Number(v || 0);
+                    const payload = ctx?.payload || {};
+                    const c = payload.count || 0;
+                    return [`${money(val)} • ${c} opp`, prettyLabel(payload.name || name)];
+                  }}
+                  contentStyle={{
+                    borderRadius: 14,
+                    border: "1px solid rgba(0,0,0,0.08)",
+                    boxShadow: "0 10px 30px rgba(0,0,0,0.10)",
+                  }}
+                  itemStyle={{ fontWeight: 700 }}
+                  labelStyle={{ fontWeight: 800 }}
+                />
+
+                <Legend
+                  verticalAlign="bottom"
+                  height={24}
+                  formatter={(value: any) => (
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>{prettyLabel(value)}</span>
+                  )}
+                />
               </PieChart>
             </ResponsiveContainer>
+          </div>
+
+          {/* Always-visible breakdown */}
+          <div className="mt-2 grid gap-2">
+            {byServiceLine.slice(0, 8).map((x, i) => (
+              <div key={x.name} className="flex items-center justify-between text-sm">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: FW_COLORS[i % FW_COLORS.length] }} />
+                  <span className="truncate font-semibold">{prettyLabel(x.name)}</span>
+                  <span className="text-xs text-gray-500">{pct(x.value, total)}</span>
+                </div>
+                <div className="font-semibold">{money(x.value)}</div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Existing table (kept) */}
       <div className="rounded-2xl border bg-background p-4 shadow-sm">
-        <OpportunitiesTable role={role} opportunities={filtered as any} accountsMap={accountsMap} contactsMap={contactsMap} />
+        <OpportunitiesTable
+          role={role}
+          opportunities={filtered as any}
+          accountsMap={accountsMap}
+          contactsMap={contactsMap}
+        />
       </div>
     </div>
   );
