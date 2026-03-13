@@ -51,7 +51,6 @@ function computeMomentumScore(tps: Touchpoint[]) {
     const when = new Date(tp.occurred_at || tp.created_at).getTime();
     const daysAgo = Math.max(0, (now - when) / dayMs);
 
-    // Recency factor (0.2..1.0) – strongest in last 7 days
     const recency =
       daysAgo <= 7 ? 1.0 :
       daysAgo <= 14 ? 0.7 :
@@ -62,10 +61,7 @@ function computeMomentumScore(tps: Touchpoint[]) {
     score += w * recency;
   }
 
-  // Soft cap: convert raw score to 0..100
-  // raw ~ 120+ should approach 100
   const normalized = Math.round(100 * (1 - Math.exp(-score / 45)));
-
   return Math.max(0, Math.min(100, normalized));
 }
 
@@ -118,6 +114,7 @@ export default function OpportunityTouchpoints({
   }
 
   useEffect(() => {
+    if (!opportunityId) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opportunityId]);
@@ -138,7 +135,6 @@ export default function OpportunityTouchpoints({
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed to add touchpoint");
 
-      // Prepend without refetch for snappy UI
       if (json.touchpoint) {
         setTouchpoints((cur) => [json.touchpoint as Touchpoint, ...cur]);
       } else {
@@ -193,9 +189,7 @@ export default function OpportunityTouchpoints({
             <span className={`rounded-full px-3 py-1 text-sm font-semibold ${badge.cls}`}>
               Momentum: {momentum}/100 · {badge.label}
             </span>
-            <span className="text-xs text-zinc-500">
-              based on recency + touchpoint type
-            </span>
+            <span className="text-xs text-zinc-500">based on recency + touchpoint type</span>
           </div>
         </div>
 
@@ -221,7 +215,6 @@ export default function OpportunityTouchpoints({
         </div>
       ) : null}
 
-      {/* Quick add */}
       <div className="mt-4">
         <div className="text-sm font-semibold">Quick add touchpoint</div>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -239,7 +232,6 @@ export default function OpportunityTouchpoints({
         </div>
       </div>
 
-      {/* Custom add with notes */}
       <div className="mt-4 grid gap-3 md:grid-cols-3">
         <div>
           <div className="text-xs text-zinc-500 mb-1">Type</div>
@@ -279,7 +271,6 @@ export default function OpportunityTouchpoints({
         </div>
       </div>
 
-      {/* Filters */}
       <div className="mt-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div className="text-sm text-zinc-600">
           {loading ? "Loading touchpoints…" : `Showing ${filtered.length} touchpoints`}
@@ -302,7 +293,6 @@ export default function OpportunityTouchpoints({
         </div>
       </div>
 
-      {/* Timeline */}
       <div className="mt-3 overflow-hidden rounded-2xl border bg-white">
         <div className="divide-y">
           {filtered.map((t) => (

@@ -3,14 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import OpportunitiesTable from "@/components/OpportunitiesTable";
-import {
-  PieChart,
-  Pie,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-  Legend,
-} from "recharts";
+import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell, Legend } from "recharts";
 
 type Opportunity = {
   id: string;
@@ -27,23 +20,19 @@ type Account = { id: string; name: string | null };
 type Contact = { id: string; name: string | null; email: string | null };
 
 const FW_COLORS = [
-  "#2563EB", // blue
-  "#16A34A", // green
-  "#F59E0B", // amber
-  "#EF4444", // red
-  "#A855F7", // purple
-  "#06B6D4", // cyan
-  "#F97316", // orange
-  "#14B8A6", // teal
-  "#64748B", // slate
+  "#2563EB",
+  "#16A34A",
+  "#F59E0B",
+  "#EF4444",
+  "#A855F7",
+  "#06B6D4",
+  "#F97316",
+  "#14B8A6",
+  "#64748B",
 ];
 
 function money(n: number) {
-  return n.toLocaleString(undefined, {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  });
+  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
 
 function uniq(arr: (string | null | undefined)[]) {
@@ -60,10 +49,7 @@ function pct(part: number, total: number) {
 }
 
 function prettyLabel(s: string) {
-  // proposal -> Proposal, custom_software -> Custom Software
-  return (s || "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (m) => m.toUpperCase());
+  return (s || "").replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
 function groupTinySlices<T extends { name: string; value: number; count: number }>(
@@ -82,14 +68,7 @@ function groupTinySlices<T extends { name: string; value: number; count: number 
   const otherValue = minor.reduce((s, r) => s + r.value, 0);
   const otherCount = minor.reduce((s, r) => s + r.count, 0);
 
-  return [
-    ...major,
-    {
-      name: "other",
-      value: otherValue,
-      count: otherCount,
-    } as T,
-  ];
+  return [...major, { name: "other", value: otherValue, count: otherCount } as T];
 }
 
 export default function OpportunitiesInsights({
@@ -105,8 +84,6 @@ export default function OpportunitiesInsights({
 }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<"newest" | "oldest">("newest");
-
-  // multi filters
   const [stages, setStages] = useState<string[]>([]);
   const [serviceLines, setServiceLines] = useState<string[]>([]);
 
@@ -123,14 +100,7 @@ export default function OpportunitiesInsights({
         const contactName = o.contact_id ? (contactsMap[o.contact_id]?.name || "") : "";
         const contactEmail = o.contact_id ? (contactsMap[o.contact_id]?.email || "") : "";
 
-        const hay = [
-          o.name || "",
-          o.stage || "",
-          o.service_line || "",
-          accountName,
-          contactName,
-          contactEmail,
-        ]
+        const hay = [o.name || "", o.stage || "", o.service_line || "", accountName, contactName, contactEmail]
           .join(" ")
           .toLowerCase();
 
@@ -179,37 +149,10 @@ export default function OpportunitiesInsights({
   }, [filtered]);
 
   const byStage = useMemo(() => groupTinySlices(byStageRaw, total, 0.03), [byStageRaw, total]);
-  const byServiceLine = useMemo(() => groupTinySlices(byServiceLineRaw, total, 0.03), [byServiceLineRaw, total]);
-
-  const donutLabel = (props: any) => {
-    // always-visible labels (but only for slices >= 6%)
-    const { cx, cy, midAngle, innerRadius, outerRadius, percent, name, value } = props;
-    if (!percent || percent < 0.06) return "";
-
-    const RADIAN = Math.PI / 180;
-    const r = innerRadius + (outerRadius - innerRadius) * 0.60;
-    const x = cx + r * Math.cos(-midAngle * RADIAN);
-    const y = cy + r * Math.sin(-midAngle * RADIAN);
-
-    return (
-      <text
-        x={x}
-        y={y}
-        textAnchor="middle"
-        dominantBaseline="central"
-        className="fill-white"
-        style={{
-          fontSize: 12,
-          fontWeight: 800,
-          paintOrder: "stroke",
-          stroke: "rgba(0,0,0,0.35)",
-          strokeWidth: 4,
-        }}
-      >
-        {`${prettyLabel(name)} • ${Math.round(percent * 100)}% • ${money(Number(value || 0))}`}
-      </text>
-    );
-  };
+  const byServiceLine = useMemo(
+    () => groupTinySlices(byServiceLineRaw, total, 0.03),
+    [byServiceLineRaw, total]
+  );
 
   return (
     <div className="space-y-3">
@@ -228,11 +171,7 @@ export default function OpportunitiesInsights({
             onChange={(e) => setQ(e.target.value)}
           />
 
-          <select
-            className="rounded-xl border px-3 py-2 text-sm"
-            value={sort}
-            onChange={(e) => setSort(e.target.value as any)}
-          >
+          <select className="rounded-xl border px-3 py-2 text-sm" value={sort} onChange={(e) => setSort(e.target.value as any)}>
             <option value="newest">Newest → Oldest</option>
             <option value="oldest">Oldest → Newest</option>
           </select>
@@ -265,11 +204,7 @@ export default function OpportunitiesInsights({
               </button>
             ))}
             {stages.length ? (
-              <button
-                type="button"
-                className="rounded-full border px-3 py-1 text-sm text-gray-700"
-                onClick={() => setStages([])}
-              >
+              <button type="button" className="rounded-full border px-3 py-1 text-sm text-gray-700" onClick={() => setStages([])}>
                 Clear
               </button>
             ) : null}
@@ -293,11 +228,7 @@ export default function OpportunitiesInsights({
               </button>
             ))}
             {serviceLines.length ? (
-              <button
-                type="button"
-                className="rounded-full border px-3 py-1 text-sm text-gray-700"
-                onClick={() => setServiceLines([])}
-              >
+              <button type="button" className="rounded-full border px-3 py-1 text-sm text-gray-700" onClick={() => setServiceLines([])}>
                 Clear
               </button>
             ) : null}
@@ -307,79 +238,53 @@ export default function OpportunitiesInsights({
 
       {/* Charts */}
       <div className="grid gap-3 md:grid-cols-2">
-        {/* Stage chart */}
         <div className="rounded-2xl border bg-white p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold">Opportunities by Stage</div>
               <div className="text-xs text-gray-600">Tap a slice to toggle that stage filter.</div>
             </div>
-            <div className="text-right">
-              <div className="text-xs text-gray-500">Stage total</div>
-              <div className="text-sm font-semibold">{money(byStage.reduce((s, x) => s + x.value, 0))}</div>
-            </div>
           </div>
 
-          <div className="mt-3 h-80">
+          <div className="mt-3 h-56 md:h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <defs>
-                  <filter id="fwShadow" x="-20%" y="-20%" width="140%" height="140%">
-                    <feDropShadow dx="0" dy="5" stdDeviation="7" floodOpacity="0.18" />
-                  </filter>
-                </defs>
-
                 <Pie
                   data={byStage}
                   dataKey="value"
                   nameKey="name"
-                  innerRadius="52%"
-                  outerRadius="88%"
+                  innerRadius="58%"
+                  outerRadius="90%"
                   paddingAngle={2}
                   cornerRadius={12}
                   labelLine={false}
-                  label={donutLabel}
-                  style={{ filter: "url(#fwShadow)" }}
+                  // ✅ remove labels to prevent "word bleed"
+                  label={false as any}
                   onClick={(d: any) => d?.name && setStages((cur) => toggle(cur, d.name))}
                 >
-                  {byStage.map((row, idx) => (
-                    <Cell
-                      key={idx}
-                      fill={FW_COLORS[idx % FW_COLORS.length]}
-                      stroke="#ffffff"
-                      strokeWidth={2}
-                    />
+                  {byStage.map((_, idx) => (
+                    <Cell key={idx} fill={FW_COLORS[idx % FW_COLORS.length]} stroke="#ffffff" strokeWidth={2} />
                   ))}
                 </Pie>
 
                 <Tooltip
-                  formatter={(v: any, name: any, ctx: any) => {
+                  formatter={(v: any, _name: any, ctx: any) => {
                     const val = Number(v || 0);
                     const payload = ctx?.payload || {};
                     const c = payload.count || 0;
-                    return [`${money(val)} • ${c} opp`, prettyLabel(payload.name || name)];
+                    return [`${money(val)} • ${c} opp`, prettyLabel(payload.name || "")];
                   }}
-                  contentStyle={{
-                    borderRadius: 14,
-                    border: "1px solid rgba(0,0,0,0.08)",
-                    boxShadow: "0 10px 30px rgba(0,0,0,0.10)",
-                  }}
-                  itemStyle={{ fontWeight: 700 }}
-                  labelStyle={{ fontWeight: 800 }}
                 />
 
                 <Legend
                   verticalAlign="bottom"
                   height={24}
-                  formatter={(value: any) => (
-                    <span style={{ fontSize: 12, fontWeight: 700 }}>{prettyLabel(value)}</span>
-                  )}
+                  formatter={(value: any) => <span style={{ fontSize: 12, fontWeight: 700 }}>{prettyLabel(value)}</span>}
                 />
               </PieChart>
             </ResponsiveContainer>
           </div>
 
-          {/* Always-visible breakdown (no hover needed) */}
           <div className="mt-2 grid gap-2">
             {byStage.slice(0, 8).map((x, i) => (
               <div key={x.name} className="flex items-center justify-between text-sm">
@@ -394,79 +299,52 @@ export default function OpportunitiesInsights({
           </div>
         </div>
 
-        {/* Service line chart */}
         <div className="rounded-2xl border bg-white p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold">Opportunities by Project Type</div>
               <div className="text-xs text-gray-600">Tap a slice to toggle that type filter.</div>
             </div>
-            <div className="text-right">
-              <div className="text-xs text-gray-500">Type total</div>
-              <div className="text-sm font-semibold">{money(byServiceLine.reduce((s, x) => s + x.value, 0))}</div>
-            </div>
           </div>
 
-          <div className="mt-3 h-80">
+          <div className="mt-3 h-56 md:h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <defs>
-                  <filter id="fwShadow2" x="-20%" y="-20%" width="140%" height="140%">
-                    <feDropShadow dx="0" dy="5" stdDeviation="7" floodOpacity="0.18" />
-                  </filter>
-                </defs>
-
                 <Pie
                   data={byServiceLine}
                   dataKey="value"
                   nameKey="name"
-                  innerRadius="52%"
-                  outerRadius="88%"
+                  innerRadius="58%"
+                  outerRadius="90%"
                   paddingAngle={2}
                   cornerRadius={12}
                   labelLine={false}
-                  label={donutLabel}
-                  style={{ filter: "url(#fwShadow2)" }}
+                  label={false as any}
                   onClick={(d: any) => d?.name && setServiceLines((cur) => toggle(cur, d.name))}
                 >
-                  {byServiceLine.map((row, idx) => (
-                    <Cell
-                      key={idx}
-                      fill={FW_COLORS[idx % FW_COLORS.length]}
-                      stroke="#ffffff"
-                      strokeWidth={2}
-                    />
+                  {byServiceLine.map((_, idx) => (
+                    <Cell key={idx} fill={FW_COLORS[idx % FW_COLORS.length]} stroke="#ffffff" strokeWidth={2} />
                   ))}
                 </Pie>
 
                 <Tooltip
-                  formatter={(v: any, name: any, ctx: any) => {
+                  formatter={(v: any, _name: any, ctx: any) => {
                     const val = Number(v || 0);
                     const payload = ctx?.payload || {};
                     const c = payload.count || 0;
-                    return [`${money(val)} • ${c} opp`, prettyLabel(payload.name || name)];
+                    return [`${money(val)} • ${c} opp`, prettyLabel(payload.name || "")];
                   }}
-                  contentStyle={{
-                    borderRadius: 14,
-                    border: "1px solid rgba(0,0,0,0.08)",
-                    boxShadow: "0 10px 30px rgba(0,0,0,0.10)",
-                  }}
-                  itemStyle={{ fontWeight: 700 }}
-                  labelStyle={{ fontWeight: 800 }}
                 />
 
                 <Legend
                   verticalAlign="bottom"
                   height={24}
-                  formatter={(value: any) => (
-                    <span style={{ fontSize: 12, fontWeight: 700 }}>{prettyLabel(value)}</span>
-                  )}
+                  formatter={(value: any) => <span style={{ fontSize: 12, fontWeight: 700 }}>{prettyLabel(value)}</span>}
                 />
               </PieChart>
             </ResponsiveContainer>
           </div>
 
-          {/* Always-visible breakdown */}
           <div className="mt-2 grid gap-2">
             {byServiceLine.slice(0, 8).map((x, i) => (
               <div key={x.name} className="flex items-center justify-between text-sm">
@@ -482,14 +360,8 @@ export default function OpportunitiesInsights({
         </div>
       </div>
 
-      {/* Existing table (kept) */}
       <div className="rounded-2xl border bg-background p-4 shadow-sm">
-        <OpportunitiesTable
-          role={role}
-          opportunities={filtered as any}
-          accountsMap={accountsMap}
-          contactsMap={contactsMap}
-        />
+        <OpportunitiesTable role={role} opportunities={filtered as any} accountsMap={accountsMap} contactsMap={contactsMap} />
       </div>
     </div>
   );

@@ -315,14 +315,22 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     <>
       <PageHeader
         title="Project"
-        subtitle="Track stage, updates, financials, milestones, team, and tasks."
+        subtitle="CEO command center for delivery, health, updates, team, milestones, and financials."
         right={
-          <Link
-            href="/dashboard/projects"
-            className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
-          >
-            Back to Projects
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/dashboard/projects/${id}/edit`}
+              className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
+            >
+              Edit Project
+            </Link>
+            <Link
+              href="/dashboard/projects"
+              className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
+            >
+              Back to Projects
+            </Link>
+          </div>
         }
       />
 

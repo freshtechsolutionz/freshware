@@ -4,24 +4,24 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 
 type Payload = {
-  event?: string; // booking_created | booking_cancelled | etc
-  external_id?: string; // BOOKING_ID
+  event?: string;
+  external_id?: string;
   contact_name?: string;
   contact_email?: string;
   phone?: string | null;
 
-  start_iso?: string; // ISO string
-  end_iso?: string; // ISO string
+  start_iso?: string;
+  end_iso?: string;
   timeZone?: string;
 
   booking_page?: string;
   event_type?: string;
-  description?: string; // your Q7/Q8/Q11 mashup
+  description?: string;
   booking_ref?: string;
 
-  meeting_link?: string; // optional if you add it later
-  zoom_link?: string; // optional if you add it later
-  location?: string; // optional if you add it later
+  meeting_link?: string;
+  zoom_link?: string;
+  location?: string;
 
   [k: string]: any;
 };
@@ -37,13 +37,57 @@ function pickMeetingLink(body: Payload): string | null {
     body.meeting_link ||
     body.zoom_link ||
     body.location ||
-    (typeof body.raw === "object" ? (body.raw?.meeting_link ?? body.raw?.zoom_link ?? body.raw?.location) : null);
+    (typeof body.raw === "object"
+      ? body.raw?.meeting_link ?? body.raw?.zoom_link ?? body.raw?.location
+      : null);
 
   const s = typeof raw === "string" ? raw.trim() : "";
-  if (!s) return null;
+  return s || null;
+}
 
-  // quick sanity: keep any string; zoom links are common
-  return s;
+async function ensureOpportunityStub(opts: {
+  supabase: any;
+  accountId: string;
+  contactId: string | null;
+  contactName: string | null;
+  contactEmail: string;
+}) {
+  const { supabase, accountId, contactId, contactName, contactEmail } = opts;
+
+  if (contactId) {
+    const existing = await supabase
+      .from("opportunities")
+      .select("id, stage")
+      .eq("account_id", accountId)
+      .eq("contact_id", contactId)
+      .is("deleted_at", null)
+      .neq("stage", "won")
+      .neq("stage", "lost")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existing.data?.id) return existing.data.id as string;
+  }
+
+  const inserted = await supabase
+    .from("opportunities")
+    .insert({
+      account_id: accountId,
+      contact_id: contactId,
+      owner_user_id: null,
+      service_line: "consultations",
+      stage: "new",
+      amount: 0,
+      probability: null,
+      last_activity_at: new Date().toISOString(),
+      name: `${contactName || contactEmail || "New Lead"} - Discovery`,
+    })
+    .select("id")
+    .single();
+
+  if (inserted.error) throw new Error(inserted.error.message);
+  return inserted.data.id as string;
 }
 
 export async function POST(req: Request, context: { params: Promise<{ accountId: string }> }) {
@@ -56,7 +100,6 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
       { auth: { persistSession: false } }
     ) as any;
 
-    // 1) Verify per-account integration secret
     const { data: integration, error: integErr } = await supabase
       .from("account_integrations")
       .select("webhook_secret,status")
@@ -74,7 +117,6 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
       return NextResponse.json({ error: "Unauthorized (x-ycbm-secret mismatch)" }, { status: 401 });
     }
 
-    // 2) Read incoming payload
     const body = (await req.json()) as Payload;
 
     const external_id = (body.external_id || "").trim();
@@ -90,7 +132,6 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
     if (!external_id) return NextResponse.json({ error: "Missing external_id" }, { status: 400 });
     if (!start_iso) return NextResponse.json({ error: "Missing start_iso" }, { status: 400 });
 
-    // 3) Upsert contact (account + email). Your contacts table requires name NOT NULL.
     let contact_id: string | null = null;
 
     if (contact_email) {
@@ -106,7 +147,7 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
           .from("contacts")
           .insert({
             account_id: accountId,
-            name: contact_name || contact_email, // NOT NULL in your schema
+            name: contact_name || contact_email,
             email: contact_email,
             phone,
             source: "youcanbookme",
@@ -135,7 +176,17 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
       }
     }
 
-    // 4) Upsert meeting
+    const opportunity_id =
+      contact_email || contact_id
+        ? await ensureOpportunityStub({
+            supabase,
+            accountId,
+            contactId: contact_id,
+            contactName: contact_name || null,
+            contactEmail: contact_email || "",
+          })
+        : null;
+
     const status =
       (body.event || "").toLowerCase() === "booking_cancelled" ? "canceled" : "scheduled";
 
@@ -148,7 +199,6 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
           external_id,
           account_id: accountId,
 
-          // legacy columns
           contact_name: contact_name,
           contact_email: contact_email || null,
           scheduled_at: start_iso,
@@ -156,7 +206,6 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
           source: "youcanbookme",
           description: description,
 
-          // newer columns you already have in meetings table:
           booked_at: new Date().toISOString(),
           start_at: start_iso,
           end_at: end_iso || null,
@@ -169,11 +218,10 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
           phone: phone,
           raw: body,
 
-          // ✅ link to contact
           contact_id: contact_id,
+          opportunity_id: opportunity_id,
 
-          // ✅ new fields we added
-          meeting_summary: description, // initial summary = your Q7/Q8/Q11 mashup
+          meeting_summary: description,
           meeting_link: meeting_link,
         },
         { onConflict: "external_id" }
@@ -181,7 +229,7 @@ export async function POST(req: Request, context: { params: Promise<{ accountId:
 
     if (mErr) return NextResponse.json({ error: mErr.message }, { status: 500 });
 
-    return NextResponse.json({ ok: true, contact_id, external_id });
+    return NextResponse.json({ ok: true, contact_id, opportunity_id, external_id });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "Server error" }, { status: 500 });
   }

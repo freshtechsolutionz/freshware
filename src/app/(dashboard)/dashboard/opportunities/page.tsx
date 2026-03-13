@@ -96,7 +96,12 @@ export default async function OpportunitiesPage() {
   return (
     <>
       <PageHeader title="Opportunities" subtitle="Track pipeline, activity, and next steps." />
-      <OpportunitiesInsights role={role} opportunities={opportunities as any} accountsMap={accountsMap} contactsMap={contactsMap} />
+      <OpportunitiesInsights
+        role={role}
+        opportunities={opportunities as any}
+        accountsMap={accountsMap}
+        contactsMap={contactsMap}
+      />
     </>
   );
 }
