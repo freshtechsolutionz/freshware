@@ -12,6 +12,8 @@ type Contact = {
   name: string | null;
   email: string | null;
   phone: string | null;
+  title: string | null;
+  company_id: string | null;
   account_id: string | null;
   created_at: string | null;
 };
@@ -39,7 +41,7 @@ export default async function EditContactPage({
 
   const { data: contact, error } = await supabase
     .from("contacts")
-    .select("id,name,email,phone,account_id,created_at")
+    .select("id,name,email,phone, title, company_id, account_id,created_at")
     .eq("id", id)
     .maybeSingle();
 
