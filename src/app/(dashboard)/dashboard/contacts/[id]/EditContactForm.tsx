@@ -10,17 +10,20 @@ type Contact = {
   name: string | null;
   email: string | null;
   phone: string | null;
+  title: string | null;
   account_id: string | null;
+  company_id: string | null;
   created_at: string | null;
 };
 
-type AccountLite = { id: string; name: string | null };
+type CompanyLite = { id: string; name: string | null };
 
 type FormState = {
   name: string;
   email: string;
   phone: string;
-  account_id: string;
+  title: string;
+  company_id: string;
 };
 
 export default function EditContactForm({
@@ -28,7 +31,7 @@ export default function EditContactForm({
   accounts,
 }: {
   initial: Contact;
-  accounts: AccountLite[];
+  accounts: CompanyLite[];
 }) {
   const router = useRouter();
 
@@ -36,7 +39,8 @@ export default function EditContactForm({
     name: initial.name || "",
     email: initial.email || "",
     phone: initial.phone || "",
-    account_id: initial.account_id || "",
+    title: initial.title || "",
+    company_id: initial.company_id || "",
   });
 
   const [saving, setSaving] = useState(false);
@@ -63,7 +67,8 @@ export default function EditContactForm({
           name,
           email: form.email.trim() || null,
           phone: form.phone.trim() || null,
-          account_id: form.account_id || null,
+          title: form.title.trim() || null,
+          company_id: form.company_id || null,
         }),
       });
 
@@ -111,7 +116,7 @@ export default function EditContactForm({
     <div>
       <PageHeader
         title="Edit Contact"
-        subtitle="Update contact details."
+        subtitle="Update contact details and company linkage."
         right={
           <Link href="/dashboard/contacts" className="rounded-lg border px-3 py-2 text-sm">
             Back to Contacts
@@ -152,13 +157,22 @@ export default function EditContactForm({
           </div>
 
           <div className="space-y-1">
-            <label className="text-sm font-medium">Account</label>
+            <label className="text-sm font-medium">Title / Role</label>
+            <input
+              value={form.title}
+              onChange={(e) => setField("title", e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Company Profile</label>
             <select
-              value={form.account_id}
-              onChange={(e) => setField("account_id", e.target.value)}
+              value={form.company_id}
+              onChange={(e) => setField("company_id", e.target.value)}
               className="w-full rounded-lg border px-3 py-2 text-sm"
             >
-              <option value="">— No account —</option>
+              <option value="">— No company linked —</option>
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}

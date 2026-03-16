@@ -1,13 +1,35 @@
 import { NextResponse } from "next/server";
 import { requireViewer } from "@/lib/supabase/route";
 
+export const runtime = "nodejs";
+
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
   const { supabase, user, profile } = await requireViewer();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!profile || profile.role === "PENDING") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!profile || profile.role === "PENDING") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!profile.account_id) {
+    return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
+  }
 
   const { id } = await context.params;
   const body = await req.json().catch(() => ({}));
+
+  const { data: existing, error: existingErr } = await supabase
+    .from("opportunities")
+    .select("id, account_id, company_id")
+    .eq("id", id)
+    .eq("account_id", profile.account_id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (existingErr) {
+    return NextResponse.json({ error: existingErr.message }, { status: 500 });
+  }
+  if (!existing) {
+    return NextResponse.json({ error: "Opportunity not found." }, { status: 404 });
+  }
 
   const update: any = {};
 
@@ -20,21 +42,72 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if ("amount" in body) update.amount = typeof body.amount === "number" ? body.amount : Number(body.amount) || 0;
   if ("probability" in body) update.probability = body.probability == null ? null : Number(body.probability) || 0;
 
-  if ("close_date" in body) update.close_date = body.close_date ? new Date(body.close_date).toISOString() : null;
-  if ("closeDate" in body) update.close_date = body.closeDate ? new Date(body.closeDate).toISOString() : null;
+  if ("close_date" in body) update.close_date = body.close_date ? String(body.close_date).slice(0, 10) : null;
+  if ("closeDate" in body) update.close_date = body.closeDate ? String(body.closeDate).slice(0, 10) : null;
 
-  if ("contact_id" in body) update.contact_id = body.contact_id ? String(body.contact_id) : null;
+  if ("company_id" in body) {
+    update.company_id = body.company_id ? String(body.company_id).trim() : null;
+  }
+
+  if ("contact_id" in body) {
+    update.contact_id = body.contact_id ? String(body.contact_id).trim() : null;
+  }
+
+  const targetCompanyId =
+    "company_id" in update ? update.company_id : existing.company_id;
+
+  if ("company_id" in update) {
+    if (!update.company_id) {
+      return NextResponse.json({ error: "company_id is required" }, { status: 400 });
+    }
+
+    const { data: company, error: companyErr } = await supabase
+      .from("companies")
+      .select("id")
+      .eq("id", update.company_id)
+      .eq("account_id", profile.account_id)
+      .maybeSingle();
+
+    if (companyErr) {
+      return NextResponse.json({ error: companyErr.message }, { status: 500 });
+    }
+    if (!company) {
+      return NextResponse.json({ error: "Selected company not found." }, { status: 400 });
+    }
+  }
+
+  if ("contact_id" in update && update.contact_id) {
+    const { data: contact, error: contactErr } = await supabase
+      .from("contacts")
+      .select("id, company_id")
+      .eq("id", update.contact_id)
+      .eq("account_id", profile.account_id)
+      .maybeSingle();
+
+    if (contactErr) {
+      return NextResponse.json({ error: contactErr.message }, { status: 500 });
+    }
+    if (!contact) {
+      return NextResponse.json({ error: "Selected contact not found." }, { status: 400 });
+    }
+    if (targetCompanyId && contact.company_id && contact.company_id !== targetCompanyId) {
+      return NextResponse.json(
+        { error: "Selected contact belongs to a different company profile." },
+        { status: 400 }
+      );
+    }
+  }
 
   const isAdmin = profile.role === "CEO" || profile.role === "ADMIN";
   if (isAdmin && "account_id" in body) update.account_id = body.account_id || null;
 
-  // Optional: record last activity timestamp anytime a change happens
   update.last_activity_at = new Date().toISOString();
 
   const { data, error } = await supabase
     .from("opportunities")
     .update(update)
     .eq("id", id)
+    .eq("account_id", profile.account_id)
     .is("deleted_at", null)
     .select()
     .single();
@@ -51,6 +124,9 @@ export async function DELETE(_req: Request, context: { params: Promise<{ id: str
 
   const isAdmin = profile.role === "CEO" || profile.role === "ADMIN";
   if (!isAdmin) return NextResponse.json({ error: "Admins only" }, { status: 403 });
+  if (!profile.account_id) {
+    return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
+  }
 
   const { id } = await context.params;
 
@@ -63,6 +139,7 @@ export async function DELETE(_req: Request, context: { params: Promise<{ id: str
     .from("opportunities")
     .update(patch)
     .eq("id", id)
+    .eq("account_id", profile.account_id)
     .is("deleted_at", null);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

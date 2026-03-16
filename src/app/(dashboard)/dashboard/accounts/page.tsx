@@ -6,10 +6,18 @@ import { createServerClient } from "@supabase/ssr";
 
 export const runtime = "nodejs";
 
-type Account = {
+type Company = {
   id: string;
   name: string | null;
+  legal_name: string | null;
+  website: string | null;
   industry: string | null;
+  customer_segment: string | null;
+  lifecycle_stage: string | null;
+  priority_level: string | null;
+  city: string | null;
+  state: string | null;
+  status: string | null;
   created_at: string | null;
 };
 
@@ -39,35 +47,51 @@ export default async function AccountsPage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, account_id")
     .eq("id", user.id)
     .maybeSingle();
 
   const role = (profile?.role || "STAFF") as string;
-
-  const { data, error } = await supabase
-    .from("accounts")
-    .select("id,name,industry,created_at")
-    .order("created_at", { ascending: false });
-
-  if (error) {
+  if (!profile?.account_id) {
     return (
       <>
-        <PageHeader title="Accounts" subtitle="Companies and organizations in your CRM." />
+        <PageHeader title="Company Profiles" subtitle="Customer companies, intelligence, and relationship profiles." />
         <div className="rounded-2xl border bg-background p-4 text-sm">
-          Error loading accounts: {error.message}
+          Missing account_id on your profile.
         </div>
       </>
     );
   }
 
-  const accounts = (data || []) as Account[];
+  const { data, error } = await supabase
+    .from("companies")
+    .select(
+      "id,name,legal_name,website,industry,customer_segment,lifecycle_stage,priority_level,city,state,status,created_at"
+    )
+    .eq("account_id", profile.account_id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return (
+      <>
+        <PageHeader title="Company Profiles" subtitle="Customer companies, intelligence, and relationship profiles." />
+        <div className="rounded-2xl border bg-background p-4 text-sm">
+          Error loading companies: {error.message}
+        </div>
+      </>
+    );
+  }
+
+  const companies = (data || []) as Company[];
 
   return (
     <>
-      <PageHeader title="Accounts" subtitle="Companies and organizations in your CRM." />
+      <PageHeader
+        title="Company Profiles"
+        subtitle="Track customer companies, decision makers, goals, risks, and linked work."
+      />
       <div className="rounded-2xl border bg-background p-4 shadow-sm">
-        <AccountsTable role={role} accounts={accounts} />
+        <AccountsTable role={role} accounts={companies as any} />
       </div>
     </>
   );

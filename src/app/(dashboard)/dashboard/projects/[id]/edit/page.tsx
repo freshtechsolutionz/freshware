@@ -15,6 +15,12 @@ type ProjectRow = {
   due_date: string | null;
   support_cost: number | null;
   support_due_date: string | null;
+  delivery_cost: number | null;
+  support_monthly_cost: number | null;
+  support_start_date: string | null;
+  support_next_due_date: string | null;
+  support_status: string | null;
+  progress_percent: number | null;
   owner_user_id: string | null;
   created_at: string | null;
   health: string | null;
@@ -76,7 +82,7 @@ export default async function EditProjectPage({
   const { data: project, error: projErr } = await supabase
     .from("projects")
     .select(
-      "id, opportunity_id, name, status, stage, start_date, due_date, support_cost, support_due_date, owner_user_id, created_at, health, account_id, description, internal_notes"
+      "id, opportunity_id, name, status, stage, start_date, due_date, support_cost, support_due_date, delivery_cost, support_monthly_cost, support_start_date, support_next_due_date, support_status, progress_percent, owner_user_id, created_at, health, account_id, description, internal_notes"
     )
     .eq("id", id)
     .eq("account_id", accountId)
@@ -130,7 +136,7 @@ export default async function EditProjectPage({
     <>
       <PageHeader
         title="Edit Project"
-        subtitle="Update project details, support window, dates, health, owner, and financials."
+        subtitle="Update delivery, support, health, dates, owner, and financials."
       />
       <EditProjectForm
         initial={project as ProjectRow}

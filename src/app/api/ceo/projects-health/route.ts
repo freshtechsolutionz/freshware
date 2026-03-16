@@ -10,24 +10,25 @@ function isStaff(role: string | null | undefined) {
 
 function computeHealth(p: {
   due_date?: string | null;
-  start_date?: string | null;
+  support_next_due_date?: string | null;
   status?: string | null;
   health?: string | null;
 }) {
-  // Respect explicit health if set
   const explicit = (p.health || "").toUpperCase().trim();
-  if (explicit === "RED" || explicit === "YELLOW" || explicit === "GREEN") return explicit;
+  if (["RED", "YELLOW", "GREEN", "UNKNOWN"].includes(explicit)) return explicit;
 
-  // Basic algorithm if not explicitly set:
-  // - If overdue => RED
-  // - If due within 7 days and not Done/Closed => YELLOW
-  // - Else GREEN (if dates exist), otherwise UNKNOWN
-  const status = (p.status || "").toLowerCase();
-  const doneLike = status.includes("done") || status.includes("complete") || status.includes("closed");
+  const status = (p.status || "").toLowerCase().trim();
+  const doneLike =
+    status.includes("done") ||
+    status.includes("complete") ||
+    status.includes("closed");
 
-  if (!p.due_date) return "UNKNOWN";
+  if (status === "on_hold" || status === "paused") return "YELLOW";
 
-  const due = new Date(p.due_date);
+  const dueSource = p.due_date || p.support_next_due_date || null;
+  if (!dueSource) return "UNKNOWN";
+
+  const due = new Date(dueSource);
   if (isNaN(due.getTime())) return "UNKNOWN";
 
   const now = new Date();
@@ -55,7 +56,9 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from("projects")
-      .select("id, name, status, stage, start_date, due_date, health, created_at")
+      .select(
+        "id, name, status, stage, start_date, due_date, support_next_due_date, support_status, progress_percent, health, created_at"
+      )
       .eq("account_id", accountId)
       .order("created_at", { ascending: false });
 

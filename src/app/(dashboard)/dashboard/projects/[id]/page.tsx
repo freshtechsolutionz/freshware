@@ -12,6 +12,7 @@ type TaskStatus = "New" | "In Progress" | "Done" | "Blocked";
 type ProjectRow = {
   id: string;
   opportunity_id: string | null;
+  company_id: string | null;
   name: string | null;
   status: string | null;
   stage: string | null;
@@ -138,7 +139,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const { data: project, error: projErr } = await supabase
     .from("projects")
     .select(
-      "id, opportunity_id, name, status, stage, start_date, due_date, owner_user_id, created_at, health, account_id, description, internal_notes"
+      "id, opportunity_id, company_id, name, status, stage, start_date, due_date, owner_user_id, created_at, health, account_id, description, internal_notes"
     )
     .eq("id", id)
     .eq("account_id", accountId)
@@ -187,6 +188,23 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
 
     if (!oppRes.error && oppRes.data) {
       opportunityName = (oppRes.data as any).name || (oppRes.data as any).id;
+    }
+  }
+
+  let company: { id: string; name: string | null } | null = null;
+  if (proj.company_id) {
+    const companyRes = await supabase
+      .from("companies")
+      .select("id, name")
+      .eq("id", proj.company_id)
+      .eq("account_id", accountId)
+      .maybeSingle();
+
+    if (!companyRes.error && companyRes.data) {
+      company = {
+        id: companyRes.data.id,
+        name: (companyRes.data as any).name || "Company",
+      };
     }
   }
 
@@ -339,6 +357,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         viewerAccountId={accountId}
         isStaff={staff}
         project={proj}
+        company={company}
         opportunityName={opportunityName}
         initialTasks={initialTasks}
         initialUpdates={initialUpdates}

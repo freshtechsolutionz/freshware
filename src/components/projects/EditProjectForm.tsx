@@ -14,6 +14,12 @@ type ProjectRow = {
   due_date: string | null;
   support_cost: number | null;
   support_due_date: string | null;
+  delivery_cost: number | null;
+  support_monthly_cost: number | null;
+  support_start_date: string | null;
+  support_next_due_date: string | null;
+  support_status: string | null;
+  progress_percent: number | null;
   owner_user_id: string | null;
   created_at: string | null;
   health: string | null;
@@ -87,6 +93,14 @@ const PROJECT_STATUS_OPTIONS = [
 
 const HEALTH_OPTIONS = ["GREEN", "YELLOW", "RED", "UNKNOWN"] as const;
 
+const SUPPORT_STATUS_OPTIONS = [
+  "inactive",
+  "active",
+  "overdue",
+  "paused",
+  "canceled",
+] as const;
+
 export default function EditProjectForm({
   initial,
   initialFinancials,
@@ -104,14 +118,37 @@ export default function EditProjectForm({
   const [status, setStatus] = useState(initial.status || "active");
   const [stage, setStage] = useState(initial.stage || "Planning");
   const [health, setHealth] = useState(initial.health || "GREEN");
+  const [progressPercent, setProgressPercent] = useState(
+    initial.progress_percent == null ? "0" : String(initial.progress_percent)
+  );
+
   const [startDate, setStartDate] = useState(dateInputValue(initial.start_date));
   const [dueDate, setDueDate] = useState(dateInputValue(initial.due_date));
-  const [supportCost, setSupportCost] = useState(
-    initial.support_cost == null ? "" : String(initial.support_cost)
+
+  const [deliveryCost, setDeliveryCost] = useState(
+    initial.delivery_cost == null ? "" : String(initial.delivery_cost)
   );
-  const [supportDueDate, setSupportDueDate] = useState(
-    dateInputValue(initial.support_due_date)
+
+  const [supportMonthlyCost, setSupportMonthlyCost] = useState(
+    initial.support_monthly_cost == null
+      ? initial.support_cost == null
+        ? ""
+        : String(initial.support_cost)
+      : String(initial.support_monthly_cost)
   );
+
+  const [supportStartDate, setSupportStartDate] = useState(
+    dateInputValue(initial.support_start_date)
+  );
+
+  const [supportNextDueDate, setSupportNextDueDate] = useState(
+    dateInputValue(initial.support_next_due_date || initial.support_due_date)
+  );
+
+  const [supportStatus, setSupportStatus] = useState(
+    initial.support_status || "inactive"
+  );
+
   const [ownerUserId, setOwnerUserId] = useState(initial.owner_user_id || "");
   const [opportunityId, setOpportunityId] = useState(initial.opportunity_id || "");
   const [description, setDescription] = useState(initial.description || "");
@@ -153,12 +190,12 @@ export default function EditProjectForm({
   }, [startDate, dueDate]);
 
   const supportInfo = useMemo(() => {
-    if (!supportDueDate) return { has: false, daysLeft: null as number | null };
-    const due = new Date(supportDueDate);
+    if (!supportNextDueDate) return { has: false, daysLeft: null as number | null };
+    const due = new Date(supportNextDueDate);
     const now = new Date();
     if (isNaN(due.getTime())) return { has: false, daysLeft: null as number | null };
     return { has: true, daysLeft: daysBetween(now, due) };
-  }, [supportDueDate]);
+  }, [supportNextDueDate]);
 
   async function onSave() {
     setErr(null);
@@ -173,10 +210,16 @@ export default function EditProjectForm({
           status: status || null,
           stage: stage || null,
           health: health || null,
+          progress_percent: progressPercent,
           start_date: startDate || null,
           due_date: dueDate || null,
-          support_cost: supportCost,
-          support_due_date: supportDueDate || null,
+          support_cost: supportMonthlyCost || null,
+          support_due_date: supportNextDueDate || null,
+          delivery_cost: deliveryCost || null,
+          support_monthly_cost: supportMonthlyCost || null,
+          support_start_date: supportStartDate || null,
+          support_next_due_date: supportNextDueDate || null,
+          support_status: supportStatus || null,
           owner_user_id: ownerUserId || null,
           opportunity_id: opportunityId || null,
           description: description.trim() || null,
@@ -277,6 +320,15 @@ export default function EditProjectForm({
             </div>
 
             <div className="space-y-1">
+              <label className="text-sm font-medium">Overall Progress %</label>
+              <input
+                value={progressPercent}
+                onChange={(e) => setProgressPercent(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div className="space-y-1">
               <label className="text-sm font-medium">Owner</label>
               <select
                 value={ownerUserId}
@@ -329,26 +381,64 @@ export default function EditProjectForm({
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm font-medium">Support cost</label>
+              <label className="text-sm font-medium">Delivery cost</label>
               <input
-                value={supportCost}
-                onChange={(e) => setSupportCost(e.target.value)}
+                value={deliveryCost}
+                onChange={(e) => setDeliveryCost(e.target.value)}
                 className="w-full rounded-xl border px-3 py-2 text-sm"
-                placeholder="e.g. 2500"
+                placeholder="e.g. 12000"
               />
               <div className="text-xs text-muted-foreground">
-                {currencyPreview(supportCost, currency)}
+                {currencyPreview(deliveryCost, currency)}
               </div>
             </div>
 
             <div className="space-y-1">
-              <label className="text-sm font-medium">Support due date</label>
+              <label className="text-sm font-medium">Support monthly cost</label>
+              <input
+                value={supportMonthlyCost}
+                onChange={(e) => setSupportMonthlyCost(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+                placeholder="e.g. 400"
+              />
+              <div className="text-xs text-muted-foreground">
+                {currencyPreview(supportMonthlyCost, currency)}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Support start date</label>
               <input
                 type="date"
-                value={supportDueDate}
-                onChange={(e) => setSupportDueDate(e.target.value)}
+                value={supportStartDate}
+                onChange={(e) => setSupportStartDate(e.target.value)}
                 className="w-full rounded-xl border px-3 py-2 text-sm"
               />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Support next due date</label>
+              <input
+                type="date"
+                value={supportNextDueDate}
+                onChange={(e) => setSupportNextDueDate(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Support status</label>
+              <select
+                value={supportStatus}
+                onChange={(e) => setSupportStatus(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+              >
+                {SUPPORT_STATUS_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="space-y-1 md:col-span-2">
@@ -375,7 +465,22 @@ export default function EditProjectForm({
           <div className="text-sm font-semibold">Progress Preview</div>
 
           <div className="rounded-2xl border p-4">
-            <div className="text-xs text-muted-foreground">Timeline Progress</div>
+            <div className="text-xs text-muted-foreground">Overall Progress</div>
+            <div className="mt-2 h-3 w-full rounded-full bg-gray-100">
+              <div
+                className="h-3 rounded-full bg-gray-900"
+                style={{
+                  width: `${Math.max(0, Math.min(100, Number(progressPercent) || 0))}%`,
+                }}
+              />
+            </div>
+            <div className="mt-2 text-sm font-semibold">
+              {Math.max(0, Math.min(100, Number(progressPercent) || 0))}% complete
+            </div>
+          </div>
+
+          <div className="rounded-2xl border p-4">
+            <div className="text-xs text-muted-foreground">Delivery Timeline</div>
             <div className="mt-2 h-3 w-full rounded-full bg-gray-100">
               <div
                 className="h-3 rounded-full bg-gray-900"
@@ -386,17 +491,20 @@ export default function EditProjectForm({
               {timeline.has ? `${timeline.pct}% elapsed` : "Add dates to calculate progress"}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              {timeline.has ? `${timeline.daysLeft} days left` : "No timeline yet"}
+              {timeline.has ? `${timeline.daysLeft} days left` : "No delivery timeline yet"}
             </div>
           </div>
 
           <div className="rounded-2xl border p-4">
             <div className="text-xs text-muted-foreground">Support Window</div>
             <div className="mt-2 text-sm font-semibold">
-              {supportInfo.has ? `${supportInfo.daysLeft} days left` : "No support date set"}
+              {supportInfo.has ? `${supportInfo.daysLeft} days until next due` : "No support due date set"}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              Support Cost: {currencyPreview(supportCost, currency)}
+              Monthly support: {currencyPreview(supportMonthlyCost, currency)}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Support status: {supportStatus}
             </div>
           </div>
 
@@ -404,14 +512,7 @@ export default function EditProjectForm({
             <div className="text-xs text-muted-foreground">Health</div>
             <div className="mt-2 text-lg font-semibold">{health}</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              This feeds your project heat map and executive reporting.
-            </div>
-          </div>
-
-          <div className="rounded-2xl border p-4">
-            <div className="text-xs text-muted-foreground">Status / Stage</div>
-            <div className="mt-2 text-sm">
-              {status} • {stage}
+              Manual health now persists and feeds your heat map.
             </div>
           </div>
         </div>

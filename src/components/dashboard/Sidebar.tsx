@@ -3,17 +3,23 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const NAV = [
+type NavItem = {
+  href?: string;
+  label: string;
+  soon?: boolean;
+};
+
+const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/sales-pipeline", label: "Sales Pipeline" },
-  { href: "/opportunities", label: "Opportunities" },
-  { href: "/contacts", label: "Contacts" },
-  { href: "/meetings", label: "Meetings" },
-  { href: "/discovery-sessions", label: "Discovery Sessions" },
-  { href: "/proposals", label: "Proposals" },
-  { href: "/projects", label: "Projects" },
-  { href: "/tasks", label: "Tasks" },
-  { href: "/activities", label: "Activities" },
+  { href: "/dashboard/meetings", label: "Meetings" },
+  { href: "/dashboard/opportunities", label: "Opportunities" },
+  { href: "/dashboard/contacts", label: "Contacts" },
+  { href: "/dashboard/projects", label: "Projects" },
+  { href: "/dashboard/tasks", label: "Tasks" },
+  { href: "/dashboard/project-heat-map", label: "Project Heat Map", soon: true },
+  { href: "/dashboard/companies", label: "Company Profiles" },
+  { href: "/dashboard/lead-generator", label: "Lead Generator", soon: true },
+  { href: "/dashboard/revenue", label: "Revenue", soon: true },
 ];
 
 export default function Sidebar() {
@@ -28,11 +34,26 @@ export default function Sidebar() {
 
         <nav className="flex flex-col gap-1">
           {NAV.map((item) => {
-            const active = pathname === item.href;
+            const active = item.href ? pathname === item.href : false;
+
+            if (item.soon) {
+              return (
+                <div
+                  key={item.label}
+                  className="flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground opacity-80"
+                >
+                  <span>{item.label}</span>
+                  <span className="rounded-full border px-2 py-0.5 text-[10px] font-semibold">
+                    Soon
+                  </span>
+                </div>
+              );
+            }
+
             return (
               <Link
                 key={item.href}
-                href={item.href}
+                href={item.href!}
                 className={[
                   "rounded-lg px-3 py-2 text-sm font-medium",
                   active ? "bg-muted" : "hover:bg-muted/60",

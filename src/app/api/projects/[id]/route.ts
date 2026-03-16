@@ -45,6 +45,13 @@ function normalizeNumber(v: any) {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizePercent(v: any) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
 export async function GET(_req: Request, context: { params: Promise<{ id: string }> }) {
   const { supabase, user, profile } = await requireViewer();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -60,7 +67,7 @@ export async function GET(_req: Request, context: { params: Promise<{ id: string
   const { data, error } = await supabase
     .from("projects")
     .select(
-      "id, opportunity_id, name, status, stage, start_date, due_date, support_cost, support_due_date, owner_user_id, created_at, health, account_id, created_by, description, internal_notes"
+      "id, opportunity_id, company_id, name, status, stage, start_date, due_date, support_cost, support_due_date, delivery_cost, support_monthly_cost, support_start_date, support_next_due_date, support_status, progress_percent, owner_user_id, created_at, health, account_id, created_by, description, internal_notes"
     )
     .eq("id", id)
     .eq("account_id", profile.account_id)
@@ -87,6 +94,16 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
 
   const { id } = await context.params;
   const body = await req.json().catch(() => ({}));
+
+  const { data: existing, error: existingErr } = await supabase
+    .from("projects")
+    .select("id, account_id, company_id, opportunity_id")
+    .eq("id", id)
+    .eq("account_id", profile.account_id)
+    .maybeSingle();
+
+  if (existingErr) return NextResponse.json({ error: existingErr.message }, { status: 500 });
+  if (!existing) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
   const patch: Record<string, any> = {};
 
@@ -118,15 +135,20 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if ("start_date" in body) patch.start_date = normalizeDateOnly(body.start_date);
   if ("due_date" in body) patch.due_date = normalizeDateOnly(body.due_date);
   if ("support_due_date" in body) patch.support_due_date = normalizeDateOnly(body.support_due_date);
+  if ("support_start_date" in body) patch.support_start_date = normalizeDateOnly(body.support_start_date);
+  if ("support_next_due_date" in body) patch.support_next_due_date = normalizeDateOnly(body.support_next_due_date);
 
   if ("support_cost" in body) patch.support_cost = normalizeNumber(body.support_cost);
+  if ("delivery_cost" in body) patch.delivery_cost = normalizeNumber(body.delivery_cost);
+  if ("support_monthly_cost" in body) patch.support_monthly_cost = normalizeNumber(body.support_monthly_cost);
+  if ("progress_percent" in body) patch.progress_percent = normalizePercent(body.progress_percent);
+
+  if ("support_status" in body) {
+    patch.support_status = body.support_status ? String(body.support_status).trim() : null;
+  }
 
   if ("owner_user_id" in body) {
     patch.owner_user_id = body.owner_user_id ? String(body.owner_user_id) : null;
-  }
-
-  if ("opportunity_id" in body) {
-    patch.opportunity_id = body.opportunity_id ? String(body.opportunity_id) : null;
   }
 
   if ("description" in body) {
@@ -137,13 +159,68 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     patch.internal_notes = body.internal_notes ? String(body.internal_notes).trim() : null;
   }
 
+  let nextCompanyId = existing.company_id as string | null;
+  if ("company_id" in body) {
+    nextCompanyId = body.company_id ? String(body.company_id).trim() : null;
+
+    if (nextCompanyId) {
+      const { data: company, error: companyErr } = await supabase
+        .from("companies")
+        .select("id")
+        .eq("id", nextCompanyId)
+        .eq("account_id", profile.account_id)
+        .maybeSingle();
+
+      if (companyErr) return NextResponse.json({ error: companyErr.message }, { status: 500 });
+      if (!company) {
+        return NextResponse.json({ error: "Selected company does not belong to this account." }, { status: 400 });
+      }
+    }
+
+    patch.company_id = nextCompanyId;
+  }
+
+  let nextOpportunityId = existing.opportunity_id as string | null;
+  if ("opportunity_id" in body) {
+    nextOpportunityId = body.opportunity_id ? String(body.opportunity_id).trim() : null;
+
+    if (nextOpportunityId) {
+      const { data: opp, error: oppErr } = await supabase
+        .from("opportunities")
+        .select("id, company_id")
+        .eq("id", nextOpportunityId)
+        .eq("account_id", profile.account_id)
+        .maybeSingle();
+
+      if (oppErr) return NextResponse.json({ error: oppErr.message }, { status: 500 });
+      if (!opp) {
+        return NextResponse.json({ error: "Selected opportunity does not belong to this account." }, { status: 400 });
+      }
+
+      if (nextCompanyId && opp.company_id && opp.company_id !== nextCompanyId) {
+        return NextResponse.json(
+          { error: "Opportunity company does not match project company." },
+          { status: 400 }
+        );
+      }
+
+      patch.opportunity_id = nextOpportunityId;
+
+      if (!patch.company_id && !existing.company_id && opp.company_id) {
+        patch.company_id = opp.company_id;
+      }
+    } else {
+      patch.opportunity_id = null;
+    }
+  }
+
   const { data, error } = await supabase
     .from("projects")
     .update(patch)
     .eq("id", id)
     .eq("account_id", profile.account_id)
     .select(
-      "id, opportunity_id, name, status, stage, start_date, due_date, support_cost, support_due_date, owner_user_id, created_at, health, account_id, created_by, description, internal_notes"
+      "id, opportunity_id, company_id, name, status, stage, start_date, due_date, support_cost, support_due_date, delivery_cost, support_monthly_cost, support_start_date, support_next_due_date, support_status, progress_percent, owner_user_id, created_at, health, account_id, created_by, description, internal_notes"
     )
     .single();
 

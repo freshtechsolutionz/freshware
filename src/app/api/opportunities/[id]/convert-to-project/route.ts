@@ -31,10 +31,9 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
       mustEnv("SUPABASE_SERVICE_ROLE_KEY")
     );
 
-    // Load the opportunity first
     const { data: opp, error: oppErr } = await admin
       .from("opportunities")
-      .select("id, name, account_id, owner_user_id, contact_id, stage")
+      .select("id, name, account_id, owner_user_id, contact_id, company_id, stage")
       .eq("id", id)
       .single();
 
@@ -46,7 +45,13 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
       return NextResponse.json({ error: "Opportunity is missing account_id" }, { status: 400 });
     }
 
-    // Prevent duplicates
+    if (!opp.company_id) {
+      return NextResponse.json(
+        { error: "Opportunity must be linked to a company profile before converting to a project." },
+        { status: 400 }
+      );
+    }
+
     const { data: existing, error: existingErr } = await admin
       .from("projects")
       .select("id")
@@ -57,7 +62,6 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
       return NextResponse.json({ error: existingErr.message }, { status: 500 });
     }
 
-    // Always make sure the opportunity is marked won
     const { error: wonErr } = await admin
       .from("opportunities")
       .update({
@@ -82,9 +86,9 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
       );
     }
 
-    // Create the project explicitly (do not rely on trigger)
     const insertRow = {
       opportunity_id: opp.id,
+      company_id: opp.company_id,
       name: opp.name || "New Project",
       status: "active",
       owner_user_id: opp.owner_user_id || user.id,
@@ -101,7 +105,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     const { data: project, error: createErr } = await admin
       .from("projects")
       .insert(insertRow)
-      .select("id, name, opportunity_id, account_id, status, created_at")
+      .select("id, name, opportunity_id, company_id, account_id, status, created_at")
       .single();
 
     if (createErr || !project) {

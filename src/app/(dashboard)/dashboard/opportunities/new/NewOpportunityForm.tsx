@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import PageHeader from "@/components/dashboard/PageHeader";
@@ -13,11 +13,25 @@ import {
   type ServiceLine,
 } from "@/lib/salesConfig";
 
+type Company = {
+  id: string;
+  name: string | null;
+};
+
+type Contact = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  company_id: string | null;
+};
+
 type FormState = {
   name: string;
   stage: SalesStage;
   serviceLine: ServiceLine;
-  amount: string; // keep as string for input control
+  amount: string;
+  company_id: string;
+  contact_id: string;
 };
 
 export default function NewOpportunityForm() {
@@ -26,19 +40,51 @@ export default function NewOpportunityForm() {
   const defaultStage = useMemo(() => (SALES_STAGES?.[0] || "new") as SalesStage, []);
   const defaultService = useMemo(() => (SERVICE_LINES?.[0] || "apps") as ServiceLine, []);
 
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [loadingCompanies, setLoadingCompanies] = useState(true);
+  const [loadingContacts, setLoadingContacts] = useState(true);
+
   const [form, setForm] = useState<FormState>({
     name: "",
     stage: defaultStage,
     serviceLine: defaultService,
     amount: "",
+    company_id: "",
+    contact_id: "",
   });
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    fetch("/api/accounts")
+      .then((r) => r.json())
+      .then((j) => setCompanies(j.companies || []))
+      .catch(() => {})
+      .finally(() => setLoadingCompanies(false));
+
+    fetch("/api/contacts")
+      .then((r) => r.json())
+      .then((j) => setContacts(j.contacts || []))
+      .catch(() => {})
+      .finally(() => setLoadingContacts(false));
+  }, []);
+
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === "company_id" && prev.company_id !== value) {
+        next.contact_id = "";
+      }
+      return next;
+    });
   }
+
+  const filteredContacts = useMemo(() => {
+    if (!form.company_id) return contacts;
+    return contacts.filter((c) => c.company_id === form.company_id);
+  }, [contacts, form.company_id]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -50,6 +96,7 @@ export default function NewOpportunityForm() {
     const amount = form.amount.trim();
 
     if (!name) return setError("Please enter an opportunity name.");
+    if (!form.company_id) return setError("Please select a company profile.");
 
     setSubmitting(true);
     try {
@@ -61,7 +108,8 @@ export default function NewOpportunityForm() {
           stage,
           serviceLine,
           amount: amount === "" ? 0 : Number(amount),
-          // Do NOT send probability here—let the DB trigger handle it
+          company_id: form.company_id || null,
+          contact_id: form.contact_id || null,
         }),
       });
 
@@ -86,7 +134,7 @@ export default function NewOpportunityForm() {
     <div>
       <PageHeader
         title="New Opportunity"
-        subtitle="Create a new opportunity in your pipeline."
+        subtitle="Create a new opportunity in your pipeline and tie it to a company."
         right={
           <Link href="/dashboard/opportunities" className="rounded-lg border px-3 py-2 text-sm">
             Back to Opportunities
@@ -105,6 +153,42 @@ export default function NewOpportunityForm() {
               className="w-full rounded-lg border px-3 py-2 text-sm"
               autoFocus
             />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Company Profile</label>
+              <select
+                value={form.company_id}
+                onChange={(e) => setField("company_id", e.target.value)}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                disabled={loadingCompanies}
+              >
+                <option value="">— Select company —</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name || "Untitled Company"}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Primary Contact</label>
+              <select
+                value={form.contact_id}
+                onChange={(e) => setField("contact_id", e.target.value)}
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                disabled={loadingContacts}
+              >
+                <option value="">— Optional contact —</option>
+                {filteredContacts.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name || "Unnamed Contact"}{c.email ? ` (${c.email})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">

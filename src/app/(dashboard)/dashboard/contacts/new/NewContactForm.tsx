@@ -5,27 +5,31 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import PageHeader from "@/components/dashboard/PageHeader";
 
-type Account = {
+type Company = {
   id: string;
   name: string | null;
+  website?: string | null;
+  industry?: string | null;
 };
 
 type FormState = {
   name: string;
   email: string;
   phone: string;
-  account_id: string;
+  title: string;
+  company_id: string;
 };
 
 export default function NewContactForm() {
   const router = useRouter();
 
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [form, setForm] = useState<FormState>({
     name: "",
     email: "",
     phone: "",
-    account_id: "",
+    title: "",
+    company_id: "",
   });
 
   const [loading, setLoading] = useState(true);
@@ -35,7 +39,7 @@ export default function NewContactForm() {
   useEffect(() => {
     fetch("/api/accounts")
       .then((r) => r.json())
-      .then((j) => setAccounts(j.accounts || []))
+      .then((j) => setCompanies(j.companies || []))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -59,7 +63,8 @@ export default function NewContactForm() {
           name: form.name.trim(),
           email: form.email.trim() || null,
           phone: form.phone.trim() || null,
-          account_id: form.account_id || null,
+          title: form.title.trim() || null,
+          company_id: form.company_id || null,
         }),
       });
 
@@ -82,7 +87,7 @@ export default function NewContactForm() {
     <div>
       <PageHeader
         title="New Contact"
-        subtitle="Add a person associated with an account."
+        subtitle="Add a person and link them to a company profile."
         right={
           <Link href="/dashboard/contacts" className="rounded-lg border px-3 py-2 text-sm">
             Back to Contacts
@@ -123,20 +128,33 @@ export default function NewContactForm() {
           </div>
 
           <div>
-            <label className="text-sm font-medium">Account</label>
+            <label className="text-sm font-medium">Title / Role</label>
+            <input
+              value={form.title}
+              onChange={(e) => setField("title", e.target.value)}
+              placeholder="e.g. Executive Director, Founder, COO"
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium">Company Profile</label>
             <select
-              value={form.account_id}
-              onChange={(e) => setField("account_id", e.target.value)}
+              value={form.company_id}
+              onChange={(e) => setField("company_id", e.target.value)}
               className="w-full rounded-lg border px-3 py-2 text-sm"
               disabled={loading}
             >
-              <option value="">— No account —</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
+              <option value="">— No company linked —</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name || "Untitled Company"}
                 </option>
               ))}
             </select>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Link this contact to the actual company profile for better forecasting and relationship tracking.
+            </div>
           </div>
 
           {error && (

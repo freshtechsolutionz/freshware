@@ -3,23 +3,23 @@ import { requireViewer } from "@/lib/supabase/route";
 
 export const runtime = "nodejs";
 
+function isStaff(role: string | null | undefined) {
+  const r = (role || "").toUpperCase();
+  return ["CEO", "ADMIN", "STAFF", "OPS", "SALES", "MARKETING"].includes(r);
+}
+
 export async function GET() {
   const { supabase, user, profile } = await requireViewer();
+
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!profile || profile.role === "PENDING") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  if (!profile.account_id) {
-    return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
-  }
+  if (!profile || profile.role === "PENDING") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!profile.account_id) return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
 
   const { data, error } = await supabase
     .from("companies")
-    .select(
-      "id,name,legal_name,website,industry,customer_segment,lifecycle_stage,priority_level,city,state,status,created_at"
-    )
+    .select("*")
     .eq("account_id", profile.account_id)
-    .order("created_at", { ascending: false });
+    .order("name", { ascending: true });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -28,51 +28,46 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const { supabase, user, profile } = await requireViewer();
+
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!profile || profile.role === "PENDING") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  if (!profile.account_id) {
-    return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
-  }
+  if (!profile || profile.role === "PENDING") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!profile.account_id) return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
+  if (!isStaff(profile.role)) return NextResponse.json({ error: "Staff only" }, { status: 403 });
 
   const body = await req.json().catch(() => ({}));
-  const name = (body?.name || "").toString().trim();
+  const name = body?.name ? String(body.name).trim() : "";
 
   if (!name) {
-    return NextResponse.json({ error: "Missing required field: name" }, { status: 400 });
+    return NextResponse.json({ error: "Company name is required." }, { status: 400 });
   }
 
-  const payload = {
+  const insertRow = {
     account_id: profile.account_id,
     name,
     legal_name: body?.legal_name ? String(body.legal_name).trim() : null,
     website: body?.website ? String(body.website).trim() : null,
     linkedin_url: body?.linkedin_url ? String(body.linkedin_url).trim() : null,
-    industry: body?.industry ? String(body.industry).trim() : null,
-    customer_segment: body?.customer_segment ? String(body.customer_segment).trim() : null,
-    lifecycle_stage: body?.lifecycle_stage ? String(body.lifecycle_stage).trim() : null,
-    priority_level: body?.priority_level ? String(body.priority_level).trim() : null,
-    primary_contact_name: body?.primary_contact_name ? String(body.primary_contact_name).trim() : null,
-    primary_contact_role: body?.primary_contact_role ? String(body.primary_contact_role).trim() : null,
-    primary_contact_email: body?.primary_contact_email ? String(body.primary_contact_email).trim() : null,
+    email: body?.email ? String(body.email).trim() : null,
     phone: body?.phone ? String(body.phone).trim() : null,
     city: body?.city ? String(body.city).trim() : null,
     state: body?.state ? String(body.state).trim() : null,
     country: body?.country ? String(body.country).trim() : null,
+    industry: body?.industry ? String(body.industry).trim() : null,
+    customer_segment: body?.customer_segment ? String(body.customer_segment).trim() : null,
+    lifecycle_stage: body?.lifecycle_stage ? String(body.lifecycle_stage).trim() : null,
+    priority_level: body?.priority_level ? String(body.priority_level).trim() : null,
+    internal_account_owner: body?.internal_account_owner ? String(body.internal_account_owner).trim() : null,
     primary_business_goals: body?.primary_business_goals ? String(body.primary_business_goals).trim() : null,
     top_pain_points: body?.top_pain_points ? String(body.top_pain_points).trim() : null,
-    status: "active",
-    created_by: user.id,
   };
 
   const { data, error } = await supabase
     .from("companies")
-    .insert([payload])
+    .insert(insertRow)
     .select("*")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ company: data }, { status: 200 });
+  return NextResponse.json({ company: data }, { status: 201 });
 }

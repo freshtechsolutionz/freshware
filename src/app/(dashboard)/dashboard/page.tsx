@@ -4,9 +4,26 @@ import { redirect } from "next/navigation";
 import { createServerClient } from "@supabase/ssr";
 import CeoOverview from "@/components/dashboard/CeoOverview";
 import AgentPanel from "@/components/dashboard/AgentPanel";
+import ToLeaveList from "@/components/dashboard/ToLeaveList";
 
 export const runtime = "nodejs";
 
+async function getVisitors(baseUrl: string) {
+  try {
+    const res = await fetch(`${baseUrl}/api/analytics/visitors`, {
+      cache: "no-store",
+    });
+    const json = await res.json();
+    if (!res.ok || !json?.ok) return null;
+    return json as {
+      visitors_today: number;
+      visitors_7d: number;
+      visitors_30d: number;
+    };
+  } catch {
+    return null;
+  }
+}
 type Profile = {
   id: string;
   full_name: string | null;
@@ -75,6 +92,13 @@ export default async function DashboardHome() {
     .eq("id", accountId)
     .maybeSingle();
   const accountName = acct?.name || accountId;
+
+    const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    "http://localhost:3000";
+
+  const visitors = await getVisitors(baseUrl);
 
   // Executive Overview metrics
   const [
@@ -160,15 +184,15 @@ export default async function DashboardHome() {
   }>;
 
   const tools = [
-    { label: "Sales Pipeline", href: "/dashboard/sales" },
+    { label: "Meetings", href: "/dashboard/meetings" },
     { label: "Opportunities", href: "/dashboard/opportunities" },
     { label: "Contacts", href: "/dashboard/contacts" },
-    { label: "Meetings", href: "/dashboard/meetings" },
-    { label: "Discovery Sessions", href: "/dashboard/discovery" },
-    { label: "Proposals", href: "/dashboard/proposals" },
     { label: "Projects", href: "/dashboard/projects" },
     { label: "Tasks", href: "/dashboard/tasks" },
-    { label: "Activities", href: "/dashboard/activities" },
+    { label: "Project Heat Map", href: "/dashboard/project-heat-map" },
+    { label: "Company Profiles", href: "/dashboard/companies" },
+    { label: "Lead Generator", href: "/dashboard/lead-generator" },
+    { label: "Revenue", href: "/dashboard/revenue" },
   ];
 
   const adminTools = [
@@ -247,55 +271,8 @@ export default async function DashboardHome() {
         </div>
       </section>
 
-      {/* ✅ My To-Do (doesn’t disrupt the flow) */}
-      <section className="fw-card-strong p-7">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-lg font-semibold text-gray-900">My To-Do</div>
-            <div className="mt-1 text-sm text-gray-600">
-              Tasks assigned to you across all projects.
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-  <Link href="/dashboard/tasks/new" className="fw-btn text-sm">
-    + Task
-  </Link>
-  <Link href="/dashboard/tasks" className="fw-btn text-sm">
-    Open Tasks
-  </Link>
-</div>
-
-        </div>
-
-        <div className="mt-5 divide-y divide-black/10 rounded-2xl border bg-white/60">
-          {myTodo.length === 0 ? (
-            <div className="p-4 text-sm text-gray-600">Nothing assigned to you right now.</div>
-          ) : (
-            myTodo.map((t) => (
-              <Link
-                key={t.task_id}
-                href={`/dashboard/tasks/${t.task_id}`}
-                className="block p-4 hover:bg-white transition"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-gray-900 break-words">
-                      {t.title || "(No title)"}
-                    </div>
-                    <div className="mt-1 text-xs text-gray-600">
-                      Due: <span className="font-semibold text-gray-900">{fmtDue(t.due_at)}</span>{" "}
-                      <span className="text-gray-400">•</span>{" "}
-                      Status: <span className="font-semibold text-gray-900">{t.status || "—"}</span>
-                    </div>
-                  </div>
-                  <span className="fw-chip shrink-0">Open</span>
-                </div>
-              </Link>
-            ))
-          )}
-        </div>
-      </section>
-
+<ToLeaveList />
+ 
       {/* CEO Overview */}
       <CeoOverview />
 
@@ -341,8 +318,13 @@ export default async function DashboardHome() {
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Link href="/dashboard/reports/analytics" className="block">
-            <MetricCard title="Site Visitors Today" value="—" sub="7 days: —  30 days: —" note="GA4 not connected in this build yet." />
+                    <Link href="/dashboard/reports/analytics" className="block">
+            <MetricCard
+              title="Site Visitors Today"
+              value={visitors ? fmt(visitors.visitors_today) : "—"}
+              sub={visitors ? `7 days: ${fmt(visitors.visitors_7d)}  30 days: ${fmt(visitors.visitors_30d)}` : "7 days: —  30 days: —"}
+              note={visitors ? "GA4 activeUsers connected." : "GA4 not connected or env vars missing."}
+            />
           </Link>
 
           <Link href="/dashboard/meetings" className="block">
@@ -369,7 +351,7 @@ export default async function DashboardHome() {
             <MetricCard title="Total Users" value={fmt(totalUsers)} sub="Users in this account" note="Account scoped." />
           </Link>
 
-          <Link href="/dashboard/reports/revenue" className="block">
+          <Link href="/dashboard/revenue" className="block">
             <MetricCard
               title="Revenue"
               value={isAdmin ? (revenueTotal === null ? "—" : `$${fmt(revenueTotal)}`) : "Restricted"}

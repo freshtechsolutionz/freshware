@@ -1,17 +1,26 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type TaskStatus = "New" | "In Progress" | "Done" | "Blocked";
 
 type ProjectRow = {
   id: string;
   opportunity_id: string | null;
+  company_id: string | null;
   name: string | null;
   status: string | null;
   stage: string | null;
   start_date: string | null;
   due_date: string | null;
+  support_cost?: number | null;
+  support_due_date?: string | null;
+  delivery_cost?: number | null;
+  support_monthly_cost?: number | null;
+  support_start_date?: string | null;
+  support_next_due_date?: string | null;
+  support_status?: string | null;
+  progress_percent?: number | null;
   owner_user_id: string | null;
   created_at: string | null;
   health: string | null;
@@ -74,8 +83,6 @@ type MilestoneRow = {
   project_id: string;
   account_id: string;
   title: string;
-  // NOTE: Some DBs may not have this column yet. We keep it optional and
-  // we DO NOT send it unless user enters a value.
   description?: string | null;
   due_at: string | null;
   status: string;
@@ -83,12 +90,41 @@ type MilestoneRow = {
 };
 
 const TASK_STATUSES: TaskStatus[] = ["New", "In Progress", "Done", "Blocked"];
+const PROJECT_STAGE_OPTIONS = [
+  "Intake",
+  "Planning",
+  "Design",
+  "Development",
+  "QA",
+  "Launch",
+  "Support",
+] as const;
+const PROJECT_STATUS_OPTIONS = [
+  "planning",
+  "active",
+  "on_hold",
+  "completed",
+  "canceled",
+] as const;
+const HEALTH_OPTIONS = ["GREEN", "YELLOW", "RED", "UNKNOWN"] as const;
+const SUPPORT_STATUS_OPTIONS = [
+  "inactive",
+  "active",
+  "overdue",
+  "paused",
+  "canceled",
+] as const;
 
 function fmtDate(s: string | null | undefined) {
   if (!s) return "N/A";
   const d = new Date(s);
   if (isNaN(d.getTime())) return "N/A";
   return d.toLocaleDateString();
+}
+
+function dateInputValue(v: string | null | undefined) {
+  if (!v) return "";
+  return String(v).slice(0, 10);
 }
 
 function daysBetween(a: Date, b: Date) {
@@ -149,11 +185,53 @@ function deriveCollection(fin: FinancialsRow) {
   return clamp((paid / billed) * 100, 0, 999);
 }
 
+function chipClasses(label: string | null | undefined, kind: "health" | "status" | "support" | "stage") {
+  const v = String(label || "").toUpperCase();
+
+  if (kind === "health") {
+    if (v === "GREEN") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    if (v === "YELLOW") return "border-amber-200 bg-amber-50 text-amber-800";
+    if (v === "RED") return "border-red-200 bg-red-50 text-red-800";
+    return "border-gray-200 bg-gray-50 text-gray-700";
+  }
+
+  if (kind === "status") {
+    if (v === "ACTIVE") return "border-blue-200 bg-blue-50 text-blue-800";
+    if (v === "ON_HOLD") return "border-amber-200 bg-amber-50 text-amber-800";
+    if (v === "COMPLETED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    if (v === "CANCELED") return "border-red-200 bg-red-50 text-red-800";
+    return "border-gray-200 bg-gray-50 text-gray-700";
+  }
+
+  if (kind === "support") {
+    if (v === "ACTIVE") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    if (v === "OVERDUE") return "border-red-200 bg-red-50 text-red-800";
+    if (v === "PAUSED") return "border-amber-200 bg-amber-50 text-amber-800";
+    if (v === "CANCELED") return "border-gray-200 bg-gray-100 text-gray-700";
+    return "border-slate-200 bg-slate-50 text-slate-700";
+  }
+
+  if (v === "SUPPORT") return "border-violet-200 bg-violet-50 text-violet-800";
+  if (v === "LAUNCH") return "border-cyan-200 bg-cyan-50 text-cyan-800";
+  if (v === "QA") return "border-orange-200 bg-orange-50 text-orange-800";
+  if (v === "DEVELOPMENT") return "border-blue-200 bg-blue-50 text-blue-800";
+  if (v === "DESIGN") return "border-pink-200 bg-pink-50 text-pink-800";
+  if (v === "PLANNING") return "border-indigo-200 bg-indigo-50 text-indigo-800";
+  if (v === "INTAKE") return "border-slate-200 bg-slate-50 text-slate-700";
+  return "border-gray-200 bg-gray-50 text-gray-700";
+}
+
+function prettyLabel(v: string | null | undefined) {
+  if (!v) return "N/A";
+  return v.replaceAll("_", " ");
+}
+
 export default function ProjectClient(props: {
   viewerRole: string;
   viewerAccountId: string;
   isStaff: boolean;
   project: ProjectRow;
+  company: { id: string; name: string | null } | null;
   opportunityName: string | null;
   initialTasks: TaskRow[];
   initialUpdates: UpdateRow[];
@@ -162,27 +240,35 @@ export default function ProjectClient(props: {
   initialTeam: TeamMemberRow[];
   initialMilestones: MilestoneRow[];
 }) {
-  const { project, isStaff, opportunityName, assignees } = props;
+  const { isStaff, opportunityName, assignees, company } = props;
 
+  const [project, setProject] = useState<ProjectRow>(props.project);
   const [tab, setTab] = useState<
     "Overview" | "Tasks" | "Updates" | "Financials" | "Team" | "Milestones"
   >("Overview");
 
   const [tasks, setTasks] = useState<TaskRow[]>(props.initialTasks || []);
   const [updates, setUpdates] = useState<UpdateRow[]>(props.initialUpdates || []);
-  const [financials, setFinancials] = useState<FinancialsRow>(
-    props.initialFinancials || null
-  );
+  const [financials, setFinancials] = useState<FinancialsRow>(props.initialFinancials || null);
   const [team, setTeam] = useState<TeamMemberRow[]>(props.initialTeam || []);
-  const [milestones, setMilestones] = useState<MilestoneRow[]>(
-    props.initialMilestones || []
-  );
+  const [milestones, setMilestones] = useState<MilestoneRow[]>(props.initialMilestones || []);
 
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [savingProject, setSavingProject] = useState(false);
+
+  useEffect(() => {
+    setProject(props.project);
+  }, [props.project]);
 
   const projectStart = project.start_date ? new Date(project.start_date) : null;
   const projectDue = project.due_date ? new Date(project.due_date) : null;
+  const supportDue = project.support_next_due_date
+    ? new Date(project.support_next_due_date)
+    : project.support_due_date
+    ? new Date(project.support_due_date)
+    : null;
+
   const today = new Date();
 
   const timeline = useMemo(() => {
@@ -302,13 +388,43 @@ export default function ProjectClient(props: {
     return list.slice(0, 6);
   }, [milestones]);
 
+  const overallProgress = useMemo(() => {
+    if (project.progress_percent !== null && project.progress_percent !== undefined) {
+      return clamp(Number(project.progress_percent) || 0, 0, 100);
+    }
+    if (timeline.has) return timeline.pct;
+    return 0;
+  }, [project.progress_percent, timeline]);
+
+  const supportDaysLeft = useMemo(() => {
+    if (!supportDue || isNaN(supportDue.getTime())) return null;
+    return daysBetween(today, supportDue);
+  }, [project.support_next_due_date, project.support_due_date]);
+
+  const supportMonthlyCost = useMemo(() => {
+    return project.support_monthly_cost ?? project.support_cost ?? null;
+  }, [project.support_monthly_cost, project.support_cost]);
+
+  const supportRisk = useMemo(() => {
+    const status = String(project.support_status || "").toLowerCase();
+    if (status === "overdue") return "Overdue";
+    if (status === "paused") return "Paused";
+    if (supportDaysLeft !== null && supportDaysLeft < 0) return "Overdue";
+    if (supportDaysLeft !== null && supportDaysLeft <= 7) return "Due Soon";
+    if (status === "active") return "Healthy";
+    return "Unknown";
+  }, [project.support_status, supportDaysLeft]);
+
+  const canEdit = isStaff;
+
   async function refreshAll() {
     setErr(null);
     setBusy(true);
     try {
       const pid = project.id;
 
-      const [t, u, f, tm, ms] = await Promise.all([
+      const [p, t, u, f, tm, ms] = await Promise.all([
+        jsonFetch(`/api/projects/${pid}`),
         jsonFetch(`/api/tasks?project_id=${encodeURIComponent(pid)}`),
         jsonFetch(`/api/projects/${pid}/updates`),
         jsonFetch(`/api/projects/${pid}/financials`),
@@ -316,6 +432,7 @@ export default function ProjectClient(props: {
         jsonFetch(`/api/projects/${pid}/milestones`),
       ]);
 
+      setProject(p?.project || project);
       setTasks(t?.tasks || []);
       setUpdates(u?.updates || []);
       setFinancials(f?.financials || null);
@@ -325,6 +442,42 @@ export default function ProjectClient(props: {
       setErr(e?.message || "Failed to refresh.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function saveProjectCore() {
+    setErr(null);
+    setSavingProject(true);
+    try {
+      const res = await jsonFetch(`/api/projects/${project.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: project.name,
+          stage: project.stage,
+          status: project.status,
+          health: project.health,
+          start_date: project.start_date,
+          due_date: project.due_date,
+          progress_percent: project.progress_percent,
+          delivery_cost: project.delivery_cost,
+          support_cost: supportMonthlyCost,
+          support_monthly_cost: supportMonthlyCost,
+          support_start_date: project.support_start_date,
+          support_due_date: project.support_next_due_date || project.support_due_date,
+          support_next_due_date: project.support_next_due_date || project.support_due_date,
+          support_status: project.support_status,
+          description: project.description,
+          internal_notes: project.internal_notes,
+        }),
+      });
+
+      if (res?.project) {
+        setProject(res.project);
+      }
+    } catch (e: any) {
+      setErr(e?.message || "Failed to save project.");
+    } finally {
+      setSavingProject(false);
     }
   }
 
@@ -417,7 +570,7 @@ export default function ProjectClient(props: {
         body: JSON.stringify({
           title: payload.title ?? null,
           body: payload.body ?? null,
-          message: payload.body ?? null, // API accepts message OR body; sending both is safe
+          message: payload.body ?? null,
           client_visible: Boolean(payload.client_visible),
           visibility: payload.visibility || (payload.client_visible ? "client" : "internal"),
         }),
@@ -427,7 +580,6 @@ export default function ProjectClient(props: {
       if (created) {
         setUpdates((prev) => [created, ...prev]);
       } else {
-        // fallback: refresh
         await refreshAll();
       }
     } catch (e: any) {
@@ -441,7 +593,6 @@ export default function ProjectClient(props: {
     setErr(null);
     setBusy(true);
     try {
-      // normalize numbers if user typed text
       const normalized = {
         ...patch,
         budget_total: patch.budget_total === "" ? null : safeNum(patch.budget_total),
@@ -509,8 +660,6 @@ export default function ProjectClient(props: {
     setErr(null);
     setBusy(true);
     try {
-      // IMPORTANT: Some DBs don’t have project_milestones.description yet.
-      // Only include it if user typed something non-empty.
       const body: any = {
         title: payload.title,
         due_at: payload.due_at ?? null,
@@ -537,7 +686,6 @@ export default function ProjectClient(props: {
     setErr(null);
     setBusy(true);
     try {
-      // Don’t send description unless user actually edited it.
       const body: any = { id, ...patch };
       if ("description" in body) {
         const v = body.description;
@@ -573,29 +721,62 @@ export default function ProjectClient(props: {
     }
   }
 
-  const canEdit = isStaff;
-
   return (
     <div className="space-y-6">
-      {/* TOP: CEO DASH BAR */}
+      {/* TOP: FRESHWARE COMMAND BAR */}
       <div className="rounded-2xl border bg-background p-5">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-1">
-            <div className="text-xs text-muted-foreground">Project</div>
-            <div className="text-xl font-semibold">{project.name || project.id}</div>
-            <div className="text-sm text-muted-foreground">
-              Opportunity: {opportunityName || "N/A"} | Stage: {project.stage || "N/A"} | Status:{" "}
-              {project.status || "N/A"} | Health: {project.health || "N/A"}
+          <div className="space-y-2">
+            <div className="text-xs text-muted-foreground">Freshware Project Command Center</div>
+            <div className="text-2xl font-semibold">{project.name || project.id}</div>
+            <div className="flex flex-wrap gap-2">
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${chipClasses(project.stage, "stage")}`}>
+                {prettyLabel(project.stage)}
+              </span>
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${chipClasses(project.status, "status")}`}>
+                {prettyLabel(project.status)}
+              </span>
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${chipClasses(project.health, "health")}`}>
+                {prettyLabel(project.health)}
+              </span>
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${chipClasses(project.support_status, "support")}`}>
+                Support: {prettyLabel(project.support_status)}
+              </span>
             </div>
+            <div className="space-y-1 text-sm text-muted-foreground">
+  <div>Opportunity: {opportunityName || "N/A"}</div>
+  <div>
+    Company:{" "}
+    {company ? (
+      <a
+        href={`/dashboard/companies/${company.id}`}
+        className="font-medium text-foreground underline underline-offset-4"
+      >
+        {company.name || "Company"}
+      </a>
+    ) : (
+      "N/A"
+    )}
+  </div>
+</div>
           </div>
 
           <div className="flex flex-wrap gap-2">
             <button
+              onClick={saveProjectCore}
+              className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+              disabled={savingProject}
+              type="button"
+            >
+              {savingProject ? "Saving..." : "Save Project"}
+            </button>
+            <button
               onClick={refreshAll}
               className="rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
               disabled={busy}
+              type="button"
             >
-              Refresh
+              {busy ? "Refreshing..." : "Refresh"}
             </button>
             <button
               onClick={async () => {
@@ -617,8 +798,35 @@ export default function ProjectClient(props: {
           </div>
         ) : null}
 
-        <div className="mt-5 grid gap-3 md:grid-cols-6">
-          <div className="rounded-2xl border p-4 md:col-span-2">
+        {/* EXECUTIVE METRICS */}
+        <div className="mt-5 grid gap-3 lg:grid-cols-12">
+          <div className="rounded-2xl border p-4 lg:col-span-3">
+            <div className="text-xs text-muted-foreground">Overall progress</div>
+            <div className="mt-2 flex items-center justify-between">
+              <div className="text-2xl font-semibold">{overallProgress}%</div>
+              <div className="text-xs text-muted-foreground">manual executive control</div>
+            </div>
+            <div className="mt-3 h-3 w-full rounded-full bg-gray-100">
+              <div className="h-3 rounded-full bg-gray-900" style={{ width: `${overallProgress}%` }} />
+            </div>
+            {canEdit ? (
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={overallProgress}
+                onChange={(e) =>
+                  setProject((prev) => ({
+                    ...prev,
+                    progress_percent: clamp(Number(e.target.value) || 0, 0, 100),
+                  }))
+                }
+                className="mt-3 w-full"
+              />
+            ) : null}
+          </div>
+
+          <div className="rounded-2xl border p-4 lg:col-span-3">
             <div className="text-xs text-muted-foreground">On-time signal</div>
             <div className="mt-1 text-lg font-semibold">{onTrackSignal.label}</div>
             <div className="mt-1 text-xs text-muted-foreground">{onTrackSignal.detail}</div>
@@ -628,11 +836,12 @@ export default function ProjectClient(props: {
             <div className="mt-2 text-xs text-muted-foreground">Confidence score</div>
           </div>
 
-          <div className="rounded-2xl border p-4 md:col-span-2">
-            <div className="text-xs text-muted-foreground">Timeline</div>
+          <div className="rounded-2xl border p-4 lg:col-span-3">
+            <div className="text-xs text-muted-foreground">Delivery</div>
             <div className="mt-1 text-sm">Start: {fmtDate(project.start_date)}</div>
             <div className="text-sm">Due: {fmtDate(project.due_date)}</div>
-            <div className="mt-2 h-2 w-full rounded-full bg-gray-100">
+            <div className="text-sm">Delivery cost: {currency(project.delivery_cost ?? null, financials?.currency)}</div>
+            <div className="mt-3 h-2 w-full rounded-full bg-gray-100">
               <div className="h-2 rounded-full bg-gray-900" style={{ width: `${timeline.has ? timeline.pct : 0}%` }} />
             </div>
             <div className="mt-2 text-xs text-muted-foreground">
@@ -642,7 +851,24 @@ export default function ProjectClient(props: {
             </div>
           </div>
 
-          <div className="rounded-2xl border p-4">
+          <div className="rounded-2xl border p-4 lg:col-span-3">
+            <div className="text-xs text-muted-foreground">Support lifecycle</div>
+            <div className="mt-1 text-sm">
+              Monthly: {currency(supportMonthlyCost, financials?.currency)}
+            </div>
+            <div className="text-sm">Next due: {fmtDate(project.support_next_due_date || project.support_due_date)}</div>
+            <div className="text-sm">Status: {prettyLabel(project.support_status)}</div>
+            <div className="mt-2 text-lg font-semibold">{supportRisk}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {supportDaysLeft === null
+                ? "No next support due date set."
+                : supportDaysLeft < 0
+                ? `${Math.abs(supportDaysLeft)} days overdue`
+                : `${supportDaysLeft} days until next support due`}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border p-4 lg:col-span-2">
             <div className="text-xs text-muted-foreground">Execution</div>
             <div className="mt-1 text-sm">New: {taskCounts["New"] || 0}</div>
             <div className="text-sm">In Progress: {taskCounts["In Progress"] || 0}</div>
@@ -650,14 +876,14 @@ export default function ProjectClient(props: {
             <div className="text-sm">Done: {taskCounts["Done"] || 0}</div>
           </div>
 
-          <div className="rounded-2xl border p-4">
-            <div className="text-xs text-muted-foreground">Delivery</div>
+          <div className="rounded-2xl border p-4 lg:col-span-2">
+            <div className="text-xs text-muted-foreground">Delivery team</div>
             <div className="mt-1 text-sm">Team: {teamCount}</div>
             <div className="text-sm">Milestones: {milestones.length}</div>
             <div className="text-sm">Milestones done: {milestoneDonePct}%</div>
           </div>
 
-          <div className="rounded-2xl border p-4 md:col-span-2">
+          <div className="rounded-2xl border p-4 lg:col-span-4">
             <div className="text-xs text-muted-foreground">Financial snapshot</div>
             <div className="mt-1 text-sm">
               Budget: {currency(financials?.budget_total ?? null, financials?.currency)}
@@ -686,8 +912,255 @@ export default function ProjectClient(props: {
               </div>
             </div>
           </div>
+
+          <div className="rounded-2xl border p-4 lg:col-span-4">
+            <div className="text-xs text-muted-foreground">What needs attention</div>
+            <div className="mt-3 grid gap-2 md:grid-cols-3">
+              <div className="rounded-2xl border p-3">
+                <div className="text-xs text-muted-foreground">Blocked tasks</div>
+                <div className="mt-1 text-lg font-semibold">{taskCounts["Blocked"] || 0}</div>
+              </div>
+
+              <div className="rounded-2xl border p-3">
+                <div className="text-xs text-muted-foreground">Due in 7 days</div>
+                <div className="mt-1 text-lg font-semibold">
+                  {
+                    tasks.filter((t) => {
+                      if (!t.due_at) return false;
+                      const d = new Date(t.due_at);
+                      if (isNaN(d.getTime())) return false;
+                      const diff = daysBetween(today, d);
+                      return diff >= 0 && diff <= 7 && String(t.status).toLowerCase() !== "done";
+                    }).length
+                  }
+                </div>
+              </div>
+
+              <div className="rounded-2xl border p-3">
+                <div className="text-xs text-muted-foreground">Support invoices at risk</div>
+                <div className="mt-1 text-lg font-semibold">
+                  {supportDaysLeft !== null && supportDaysLeft < 0 ? 1 : 0}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
+        {/* INLINE EDITABLE CORE */}
+        {canEdit ? (
+          <div className="mt-5 grid gap-3 xl:grid-cols-3">
+            <div className="rounded-2xl border p-4 space-y-3 xl:col-span-2">
+              <div className="text-sm font-semibold">Project controls</div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Stage</div>
+                  <select
+                    value={project.stage || ""}
+                    onChange={(e) =>
+                      setProject((prev) => ({ ...prev, stage: e.target.value || null }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                  >
+                    {PROJECT_STAGE_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Status</div>
+                  <select
+                    value={project.status || ""}
+                    onChange={(e) =>
+                      setProject((prev) => ({ ...prev, status: e.target.value || null }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                  >
+                    {PROJECT_STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Health</div>
+                  <select
+                    value={project.health || ""}
+                    onChange={(e) =>
+                      setProject((prev) => ({ ...prev, health: e.target.value || null }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                  >
+                    {HEALTH_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Start date</div>
+                  <input
+                    type="date"
+                    value={dateInputValue(project.start_date)}
+                    onChange={(e) =>
+                      setProject((prev) => ({ ...prev, start_date: e.target.value || null }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Due date</div>
+                  <input
+                    type="date"
+                    value={dateInputValue(project.due_date)}
+                    onChange={(e) =>
+                      setProject((prev) => ({ ...prev, due_date: e.target.value || null }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Delivery cost</div>
+                  <input
+                    value={project.delivery_cost ?? ""}
+                    onChange={(e) =>
+                      setProject((prev) => ({
+                        ...prev,
+                        delivery_cost: e.target.value === "" ? null : safeNum(e.target.value),
+                      }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                    placeholder="12000"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Support monthly</div>
+                  <input
+                    value={supportMonthlyCost ?? ""}
+                    onChange={(e) =>
+                      setProject((prev) => ({
+                        ...prev,
+                        support_monthly_cost: e.target.value === "" ? null : safeNum(e.target.value),
+                        support_cost: e.target.value === "" ? null : safeNum(e.target.value),
+                      }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                    placeholder="400"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Support start</div>
+                  <input
+                    type="date"
+                    value={dateInputValue(project.support_start_date)}
+                    onChange={(e) =>
+                      setProject((prev) => ({
+                        ...prev,
+                        support_start_date: e.target.value || null,
+                      }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Support next due</div>
+                  <input
+                    type="date"
+                    value={dateInputValue(project.support_next_due_date || project.support_due_date)}
+                    onChange={(e) =>
+                      setProject((prev) => ({
+                        ...prev,
+                        support_next_due_date: e.target.value || null,
+                        support_due_date: e.target.value || null,
+                      }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Support status</div>
+                  <select
+                    value={project.support_status || "inactive"}
+                    onChange={(e) =>
+                      setProject((prev) => ({
+                        ...prev,
+                        support_status: e.target.value || null,
+                      }))
+                    }
+                    className="w-full rounded-2xl border px-3 py-2 text-sm"
+                  >
+                    {SUPPORT_STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border p-4 space-y-3">
+              <div className="text-sm font-semibold">Executive progress control</div>
+              <div className="text-xs text-muted-foreground">
+                Use this for the real overall project completion signal, separate from timeline math.
+              </div>
+
+              <div className="text-3xl font-semibold">{overallProgress}%</div>
+              <div className="h-3 w-full rounded-full bg-gray-100">
+                <div className="h-3 rounded-full bg-gray-900" style={{ width: `${overallProgress}%` }} />
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={overallProgress}
+                onChange={(e) =>
+                  setProject((prev) => ({
+                    ...prev,
+                    progress_percent: clamp(Number(e.target.value) || 0, 0, 100),
+                  }))
+                }
+                className="w-full"
+              />
+              <button
+                onClick={saveProjectCore}
+                className="w-full rounded-2xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+                disabled={savingProject}
+                type="button"
+              >
+                {savingProject ? "Saving..." : "Save Core Fields"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+<div className="mt-5 rounded-2xl border p-4">
+  <div className="text-sm font-semibold">Customer company</div>
+  <div className="mt-2 text-sm text-muted-foreground">
+    {company ? (
+      <a
+        href={`/dashboard/companies/${company.id}`}
+        className="font-medium text-foreground underline underline-offset-4"
+      >
+        {company.name || "Company"}
+      </a>
+    ) : (
+      "This project is not linked to a company yet."
+    )}
+  </div>
+</div>
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           <div className="rounded-2xl border p-4">
             <div className="text-sm font-semibold">Description</div>
@@ -815,7 +1288,7 @@ export default function ProjectClient(props: {
               <div>
                 <div className="text-sm font-semibold">What needs attention</div>
                 <div className="text-xs text-muted-foreground">
-                  A CEO-style scan for risk, blockers, and deadlines.
+                  A CEO-style scan for risk, blockers, deadlines, and support billing.
                 </div>
               </div>
               <button
@@ -827,12 +1300,12 @@ export default function ProjectClient(props: {
               </button>
             </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
               <div className="rounded-2xl border p-4">
                 <div className="text-xs text-muted-foreground">Blocked tasks</div>
                 <div className="mt-1 text-lg font-semibold">{taskCounts["Blocked"] || 0}</div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  If &gt; 0, this project is not safe.
+                  If &gt; 0, delivery is not safe.
                 </div>
               </div>
 
@@ -863,6 +1336,18 @@ export default function ProjectClient(props: {
                   Cost-to-date vs budget.
                 </div>
               </div>
+
+              <div className="rounded-2xl border p-4">
+                <div className="text-xs text-muted-foreground">Support risk</div>
+                <div className="mt-1 text-lg font-semibold">{supportRisk}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {supportDaysLeft === null
+                    ? "Set support next due date."
+                    : supportDaysLeft < 0
+                    ? `${Math.abs(supportDaysLeft)} days overdue`
+                    : `${supportDaysLeft} days until support due`}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -882,7 +1367,7 @@ export default function ProjectClient(props: {
         />
       ) : null}
 
-      {/* UPDATES (NOW HAS A COMPOSER) */}
+      {/* UPDATES */}
       {tab === "Updates" ? (
         <UpdatesPanel
           isStaff={isStaff}
@@ -899,6 +1384,10 @@ export default function ProjectClient(props: {
           busy={busy}
           financials={financials}
           onSave={saveFinancials}
+          deliveryCost={project.delivery_cost ?? null}
+          supportMonthlyCost={supportMonthlyCost}
+          supportStatus={project.support_status ?? null}
+          supportNextDueDate={project.support_next_due_date || project.support_due_date || null}
         />
       ) : null}
 
@@ -1242,6 +1731,10 @@ function FinancialsPanel(props: {
   busy: boolean;
   financials: FinancialsRow;
   onSave: (patch: any) => void;
+  deliveryCost: number | null;
+  supportMonthlyCost: number | null;
+  supportStatus: string | null;
+  supportNextDueDate: string | null;
 }) {
   const f = props.financials;
   const [budget, setBudget] = useState<string>(f?.budget_total?.toString() || "");
@@ -1255,11 +1748,19 @@ function FinancialsPanel(props: {
       <div>
         <div className="text-sm font-semibold">Financials</div>
         <div className="text-xs text-muted-foreground">
-          Staff can edit. Clients see a read-only snapshot.
+          Delivery, collections, and support economics in one place.
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-7">
+        <div className="rounded-2xl border p-4">
+          <div className="text-xs text-muted-foreground">Delivery cost</div>
+          <div className="mt-1 text-sm font-semibold">{currency(props.deliveryCost ?? null, f?.currency)}</div>
+        </div>
+        <div className="rounded-2xl border p-4">
+          <div className="text-xs text-muted-foreground">Support monthly</div>
+          <div className="mt-1 text-sm font-semibold">{currency(props.supportMonthlyCost ?? null, f?.currency)}</div>
+        </div>
         <div className="rounded-2xl border p-4">
           <div className="text-xs text-muted-foreground">Budget</div>
           <div className="mt-1 text-sm font-semibold">{currency(f?.budget_total ?? null, f?.currency)}</div>
@@ -1277,8 +1778,9 @@ function FinancialsPanel(props: {
           <div className="mt-1 text-sm font-semibold">{currency(f?.paid_to_date ?? null, f?.currency)}</div>
         </div>
         <div className="rounded-2xl border p-4">
-          <div className="text-xs text-muted-foreground">Currency</div>
-          <div className="mt-1 text-sm font-semibold">{f?.currency || "USD"}</div>
+          <div className="text-xs text-muted-foreground">Support</div>
+          <div className="mt-1 text-sm font-semibold">{prettyLabel(props.supportStatus)}</div>
+          <div className="mt-1 text-xs text-muted-foreground">{fmtDate(props.supportNextDueDate)}</div>
         </div>
       </div>
 
@@ -1444,7 +1946,6 @@ function MilestonesPanel(props: {
               onClick={() => {
                 props.onCreate({
                   title: title.trim(),
-                  // Only send description if user typed it (avoids schema cache error if column doesn't exist)
                   description: description.trim() ? description.trim() : undefined,
                   due_at: due ? new Date(due).toISOString() : null,
                   status,
