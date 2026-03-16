@@ -16,7 +16,15 @@ function requireEnv(name: string) {
 
 async function runReport(propertyId: string, startDate: string, endDate: string) {
   const clientEmail = requireEnv("GOOGLE_CLIENT_EMAIL");
-  const privateKey = requireEnv("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n");
+  const rawPrivateKey = requireEnv("GOOGLE_PRIVATE_KEY").trim();
+const privateKey = rawPrivateKey
+  .replace(/^"|"$/g, "")
+  .replace(/^'|'$/g, "")
+  .replace(/\\n/g, "\n");
+
+  if (!privateKey.includes("BEGIN PRIVATE KEY") || !privateKey.includes("END PRIVATE KEY")) {
+  throw new Error("GOOGLE_PRIVATE_KEY format is invalid after normalization");
+}
 
   const auth = new GoogleAuth({
     credentials: {
