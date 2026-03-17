@@ -24,10 +24,15 @@ function monthKey(d: Date) {
 }
 
 function monthLabelFromKey(key: string) {
-  // key: YYYY-MM
   const [y, m] = key.split("-").map((x) => Number(x));
   const dt = new Date(Date.UTC(y, (m || 1) - 1, 1));
   return dt.toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+function parseDate(v: string | null | undefined) {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 export async function GET() {
@@ -39,7 +44,6 @@ export async function GET() {
   const accountId = profile.account_id;
   if (!accountId) return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
 
-  // KPIs
   const nowIso = new Date().toISOString();
 
   const [
@@ -50,7 +54,6 @@ export async function GET() {
     oppRes,
     revenueRes,
   ] = await Promise.all([
-    // overdue tasks (not Done, due < now)
     supabase
       .from("tasks")
       .select("task_id", { count: "exact", head: true })
@@ -58,35 +61,30 @@ export async function GET() {
       .lt("due_at", nowIso)
       .not("status", "in", '("Done")'),
 
-    // blocked tasks
     supabase
       .from("tasks")
       .select("task_id", { count: "exact", head: true })
       .eq("account_id", accountId)
       .eq("status", "Blocked"),
 
-    // meetings booked
     supabase
       .from("meetings")
       .select("id", { count: "exact", head: true })
       .eq("account_id", accountId),
 
-    // projects
     supabase
       .from("projects")
       .select("id,status", { count: "exact" })
       .eq("account_id", accountId),
 
-    // opportunities (for open pipeline)
     supabase
       .from("opportunities")
-      .select("id, amount, stage", { count: "exact" })
+      .select("id, amount, stage")
       .eq("account_id", accountId),
 
-    // revenue entries for trend (created_at based)
     supabase
       .from("revenue_entries")
-      .select("amount, created_at")
+      .select("amount, recognized_on, entry_date, frequency, start_date, end_date, status, paid, revenue_type, type, source")
       .eq("account_id", accountId),
   ]);
 
@@ -105,7 +103,7 @@ export async function GET() {
   const totalProjects = projectsRes.count ?? projectsRows.length ?? 0;
   const activeProjects = projectsRows.filter((p) => {
     const s = String(p.status || "").toLowerCase();
-    return !["done", "closed", "completed", "cancelled"].includes(s);
+    return !["done", "closed", "completed", "cancelled", "canceled"].includes(s);
   }).length;
 
   const oppRows = (oppRes.data || []) as Array<{ id: string; amount: number | null; stage: string | null }>;
@@ -116,43 +114,97 @@ export async function GET() {
   const openOppCount = openOpp.length;
   const openPipeline = openOpp.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
-  // Pipeline by stage (top 6)
   const byStageMap: Record<string, { count: number; amount: number }> = {};
   for (const o of oppRows) {
-    const stage = (String(o.stage || "Unknown").trim() || "Unknown");
+    const stage = String(o.stage || "Unknown").trim() || "Unknown";
     const amt = Number(o.amount || 0) || 0;
     if (!byStageMap[stage]) byStageMap[stage] = { count: 0, amount: 0 };
     byStageMap[stage].count += 1;
     byStageMap[stage].amount += amt;
   }
+
   const pipelineByStage = Object.entries(byStageMap)
     .map(([stage, v]) => ({ stage, count: v.count, amount: v.amount }))
     .sort((a, b) => b.amount - a.amount)
     .slice(0, 6);
 
-  // Revenue Trend (last 6 months, created_at based)
+  // Revenue trend
   const now = new Date();
   const thisMonth = startOfMonth(now);
-  const start = addMonths(thisMonth, -5); // includes this month + 5 back
+  const start = addMonths(thisMonth, -5);
+
   const buckets: Record<string, number> = {};
   for (let i = 0; i < 6; i++) {
-    const k = monthKey(addMonths(start, i));
-    buckets[k] = 0;
+    buckets[monthKey(addMonths(start, i))] = 0;
   }
 
-  const revRows = (revenueRes.data || []) as Array<{ amount: number | null; created_at: string | null }>;
-  for (const r of revRows) {
-    if (!r.created_at) continue;
-    const dt = new Date(r.created_at);
-    if (dt < start) continue;
-    const k = monthKey(startOfMonth(dt));
-    if (!(k in buckets)) continue;
-    buckets[k] += Number(r.amount || 0) || 0;
+  const revenueRows = (revenueRes.data || []) as Array<{
+    amount: number | null;
+    recognized_on: string | null;
+    entry_date: string | null;
+    frequency: string | null;
+    start_date: string | null;
+    end_date: string | null;
+    status: string | null;
+    paid: boolean | null;
+    revenue_type: string | null;
+    type: string | null;
+    source: string | null;
+  }>;
+
+  for (const r of revenueRows) {
+    const amount = Number(r.amount || 0) || 0;
+    if (!amount) continue;
+
+    const effectiveStatus = String(r.status || (r.paid ? "received" : "pending") || "").toLowerCase();
+    const frequency = String(r.frequency || "one_time").toLowerCase();
+
+    if (frequency === "monthly") {
+      // Recurring support / MRR: add amount to every active month in the visible range
+      const startDate =
+        parseDate(r.start_date) ||
+        parseDate(r.recognized_on) ||
+        parseDate(r.entry_date) ||
+        start;
+
+      const endDate =
+        parseDate(r.end_date) ||
+        thisMonth;
+
+      if (!startDate) continue;
+
+      let cursor = startOfMonth(startDate < start ? start : startDate);
+      const hardEnd = startOfMonth(endDate > thisMonth ? thisMonth : endDate);
+
+      while (cursor <= hardEnd) {
+        const key = monthKey(cursor);
+        if (key in buckets && ["active", "recognized", "received", ""].includes(effectiveStatus)) {
+          buckets[key] += amount;
+        }
+        cursor = addMonths(cursor, 1);
+      }
+    } else {
+      // One-time revenue
+      const dt =
+        parseDate(r.recognized_on) ||
+        parseDate(r.entry_date);
+
+      if (!dt) continue;
+      if (dt < start) continue;
+
+      const key = monthKey(startOfMonth(dt));
+      if (key in buckets) {
+        buckets[key] += amount;
+      }
+    }
   }
 
   const revenueTrend = Object.keys(buckets)
     .sort()
-    .map((k) => ({ month: monthLabelFromKey(k), amount: buckets[k] }));
+    .map((k) => ({
+      month: monthLabelFromKey(k),
+      amount: buckets[k],
+    }));
 
   return NextResponse.json(
     {

@@ -16,10 +16,10 @@ const NAV: NavItem[] = [
   { href: "/dashboard/contacts", label: "Contacts" },
   { href: "/dashboard/projects", label: "Projects" },
   { href: "/dashboard/tasks", label: "Tasks" },
-  { href: "/dashboard/project-heat-map", label: "Project Heat Map", soon: true },
+  { href: "/dashboard/reports/projects-health", label: "Project Health" },
   { href: "/dashboard/companies", label: "Company Profiles" },
   { href: "/dashboard/lead-generator", label: "Lead Generator", soon: true },
-  { href: "/dashboard/revenue", label: "Revenue", soon: true },
+  { href: "/dashboard/revenue", label: "Revenue" },
 ];
 
 export default function Sidebar() {

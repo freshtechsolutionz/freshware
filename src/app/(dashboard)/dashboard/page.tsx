@@ -8,6 +8,63 @@ import ToLeaveList from "@/components/dashboard/ToLeaveList";
 
 export const runtime = "nodejs";
 
+type Profile = {
+  id: string;
+  full_name: string | null;
+  role: string;
+  account_id: string | null;
+};
+
+function fmt(n: number) {
+  return new Intl.NumberFormat().format(n);
+}
+
+function money(n: number | null | undefined) {
+  const value = Number(n || 0);
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function pct(n: number) {
+  return `${Math.round(n)}%`;
+}
+
+function fmtDue(dueIso: string | null) {
+  if (!dueIso) return "No due date";
+  const d = new Date(dueIso);
+  if (Number.isNaN(d.getTime())) return "Invalid date";
+  return d.toLocaleDateString();
+}
+
+function startOfMonth(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+function startOfYear(d = new Date()) {
+  return new Date(d.getFullYear(), 0, 1);
+}
+
+function isSameMonth(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+
+function isSameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function daysAgo(n: number) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d;
+}
+
 async function getVisitors(baseUrl: string) {
   try {
     const res = await fetch(`${baseUrl}/api/analytics/visitors`, {
@@ -23,23 +80,6 @@ async function getVisitors(baseUrl: string) {
   } catch {
     return null;
   }
-}
-type Profile = {
-  id: string;
-  full_name: string | null;
-  role: string;
-  account_id: string | null;
-};
-
-function fmt(n: number) {
-  return new Intl.NumberFormat().format(n);
-}
-
-function fmtDue(dueIso: string | null) {
-  if (!dueIso) return "No due date";
-  const d = new Date(dueIso);
-  if (Number.isNaN(d.getTime())) return "Invalid date";
-  return d.toLocaleDateString();
 }
 
 export default async function DashboardHome() {
@@ -91,80 +131,257 @@ export default async function DashboardHome() {
     .select("name")
     .eq("id", accountId)
     .maybeSingle();
+
   const accountName = acct?.name || accountId;
 
-    const baseUrl =
+  const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL ||
     process.env.NEXT_PUBLIC_SITE_URL ||
     "http://localhost:3000";
 
   const visitors = await getVisitors(baseUrl);
 
-  // Executive Overview metrics
+  const now = new Date();
+  const monthStart = startOfMonth(now);
+  const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const yearStart = startOfYear(now);
+  const thirtyDaysAgoIso = daysAgo(30).toISOString();
+  const sevenDaysAgoIso = daysAgo(7).toISOString();
+  const today = new Date();
+
   const [
     usersRes,
     tasksRes,
-    oppOpenRes,
-    oppAllRes,
-    projectsActiveRes,
-    projectsAllRes,
+    oppRes,
+    projectsRes,
     meetingsRes,
     ycbmRes,
     revenueRes,
+    contactsRes,
+    companiesRes,
   ] = await Promise.all([
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("account_id", accountId),
-    supabase.from("tasks").select("task_id", { count: "exact", head: true }).eq("account_id", accountId),
 
-    supabase.from("opportunities").select("id, amount, stage", { count: "exact" }).eq("account_id", accountId),
-    supabase.from("opportunities").select("id", { count: "exact", head: true }).eq("account_id", accountId),
+    supabase
+      .from("tasks")
+      .select("task_id, status, due_at, created_at", { count: "exact" })
+      .eq("account_id", accountId),
 
-    supabase.from("projects").select("id,status", { count: "exact" }).eq("account_id", accountId),
-    supabase.from("projects").select("id", { count: "exact", head: true }).eq("account_id", accountId),
+    supabase
+      .from("opportunities")
+      .select("id, amount, probability, stage, close_date, created_at")
+      .eq("account_id", accountId),
+
+    supabase
+      .from("projects")
+      .select("id, status, health, due_date, created_at")
+      .eq("account_id", accountId),
 
     supabase.from("meetings").select("id", { count: "exact", head: true }).eq("account_id", accountId),
+
     supabase.from("ycbm_bookings").select("id", { count: "exact", head: true }).eq("account_id", accountId),
 
-    supabase.from("revenue_entries").select("amount", { count: "exact" }).eq("account_id", accountId),
+    supabase
+      .from("revenue_entries")
+      .select("id, amount, recognized_on, entry_date, revenue_type, type, status, paid")
+      .eq("account_id", accountId),
+
+    supabase
+      .from("contacts")
+      .select("id, created_at")
+      .eq("account_id", accountId),
+
+    supabase
+      .from("companies")
+      .select("id, created_at")
+      .eq("account_id", accountId),
   ]);
 
   const totalUsers = usersRes.count ?? 0;
-  const totalTasks = tasksRes.count ?? 0;
-
-  let openOppCount = 0;
-  let openPipeline = 0;
-
-  if (!oppOpenRes.error) {
-    const rows = (oppOpenRes.data || []) as any[];
-    const openRows = rows.filter((r) => {
-      const s = String(r.stage || "").toLowerCase();
-      return s !== "won" && s !== "lost";
-    });
-    openOppCount = openRows.length;
-    openPipeline = openRows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-  }
-
-  const totalOppCount = oppAllRes.count ?? 0;
-
-  let activeProjects = 0;
-  if (!projectsActiveRes.error) {
-    const rows = (projectsActiveRes.data || []) as any[];
-    activeProjects = rows.filter((r) => {
-      const s = String(r.status || "").toLowerCase();
-      return !["done", "closed", "completed", "cancelled"].includes(s);
-    }).length;
-  }
-  const totalProjects = projectsAllRes.count ?? 0;
-
   const meetingsBooked = meetingsRes.count ?? 0;
   const ycbmBooked = ycbmRes.error ? 0 : (ycbmRes.count ?? 0);
 
-  let revenueTotal: number | null = null;
-  if (!revenueRes.error && isAdmin) {
-    const rows = (revenueRes.data || []) as any[];
-    revenueTotal = rows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-  }
+  const taskRows = (tasksRes.data || []) as Array<{
+    task_id: string;
+    status: string | null;
+    due_at: string | null;
+    created_at: string | null;
+  }>;
 
-  // ✅ MY TODO (assigned to me, across all projects)
+  const oppRows = (oppRes.data || []) as Array<{
+    id: string;
+    amount: number | null;
+    probability: number | null;
+    stage: string | null;
+    close_date: string | null;
+    created_at: string | null;
+  }>;
+
+  const projectRows = (projectsRes.data || []) as Array<{
+    id: string;
+    status: string | null;
+    health: string | null;
+    due_date: string | null;
+    created_at: string | null;
+  }>;
+
+  const revenueRows = (revenueRes.data || []) as Array<{
+    id: string;
+    amount: number | null;
+    recognized_on: string | null;
+    entry_date: string | null;
+    revenue_type: string | null;
+    type: string | null;
+    status: string | null;
+    paid: boolean | null;
+  }>;
+
+  const contactRows = (contactsRes.data || []) as Array<{
+    id: string;
+    created_at: string | null;
+  }>;
+
+  const companyRows = (companiesRes.data || []) as Array<{
+    id: string;
+    created_at: string | null;
+  }>;
+
+  // Tasks / execution
+  const totalTasks = tasksRes.count ?? taskRows.length ?? 0;
+  const overdueTasks = taskRows.filter((t) => {
+    if (!t.due_at) return false;
+    const due = new Date(t.due_at);
+    const status = String(t.status || "").toLowerCase();
+    return due < now && status !== "done";
+  }).length;
+
+  const dueTodayTasks = taskRows.filter((t) => {
+    if (!t.due_at) return false;
+    const due = new Date(t.due_at);
+    const status = String(t.status || "").toLowerCase();
+    return isSameDay(due, today) && status !== "done";
+  }).length;
+
+  const completedThisWeek = taskRows.filter((t) => {
+    const status = String(t.status || "").toLowerCase();
+    if (status !== "done") return false;
+    if (!t.created_at) return false;
+    return new Date(t.created_at) >= new Date(sevenDaysAgoIso);
+  }).length;
+
+  const blockedTasks = taskRows.filter(
+    (t) => String(t.status || "").toLowerCase() === "blocked"
+  ).length;
+
+  // Opportunities / sales
+  const openOppRows = oppRows.filter((r) => {
+    const s = String(r.stage || "").toLowerCase();
+    return s !== "won" && s !== "lost";
+  });
+
+  const wonOppRows = oppRows.filter((r) => {
+    const s = String(r.stage || "").toLowerCase();
+    return s === "won";
+  });
+
+  const openOppCount = openOppRows.length;
+  const totalOppCount = oppRows.length;
+  const openPipeline = openOppRows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+  const weightedPipeline = openOppRows.reduce((sum, r) => {
+    const amount = Number(r.amount) || 0;
+    const probability = Number(r.probability) || 0;
+    return sum + amount * (probability / 100);
+  }, 0);
+
+  const closingThisMonth = openOppRows.reduce((sum, r) => {
+    if (!r.close_date) return sum;
+    const d = new Date(r.close_date);
+    return isSameMonth(d, now) ? sum + (Number(r.amount) || 0) : sum;
+  }, 0);
+
+  const closedWonThisMonth = wonOppRows.reduce((sum, r) => {
+    if (!r.close_date) return sum;
+    const d = new Date(r.close_date);
+    return isSameMonth(d, now) ? sum + (Number(r.amount) || 0) : sum;
+  }, 0);
+
+  // Projects / health
+  const activeProjects = projectRows.filter((r) => {
+    const s = String(r.status || "").toLowerCase();
+    return !["done", "closed", "completed", "cancelled", "canceled"].includes(s);
+  }).length;
+
+  const totalProjects = projectRows.length;
+
+  const atRiskProjects = projectRows.filter((r) => {
+    const health = String(r.health || "").toLowerCase();
+    return health === "red" || health === "yellow";
+  }).length;
+
+  const completedProjectsThisMonth = projectRows.filter((r) => {
+    const s = String(r.status || "").toLowerCase();
+    if (!["done", "completed", "closed"].includes(s)) return false;
+    if (!r.created_at) return false;
+    return isSameMonth(new Date(r.created_at), now);
+  }).length;
+
+  // Revenue
+  const normalizedRevenue = revenueRows.map((r) => {
+    const dateStr = r.recognized_on || r.entry_date;
+    const date = dateStr ? new Date(dateStr) : null;
+    const amount = Number(r.amount) || 0;
+    return { ...r, amount, date };
+  });
+
+  const revenueThisMonth = normalizedRevenue.reduce((sum, r) => {
+    if (!r.date) return sum;
+    return isSameMonth(r.date, now) ? sum + r.amount : sum;
+  }, 0);
+
+  const revenueLastMonth = normalizedRevenue.reduce((sum, r) => {
+    if (!r.date) return sum;
+    return isSameMonth(r.date, prevMonthStart) ? sum + r.amount : sum;
+  }, 0);
+
+  const revenueYtd = normalizedRevenue.reduce((sum, r) => {
+    if (!r.date) return sum;
+    return r.date >= yearStart ? sum + r.amount : sum;
+  }, 0);
+
+  const avgDealSize = normalizedRevenue.length
+    ? normalizedRevenue.reduce((sum, r) => sum + r.amount, 0) / normalizedRevenue.length
+    : 0;
+
+  // Growth / conversion
+  const newContacts30d = contactRows.filter((c) => {
+    if (!c.created_at) return false;
+    return new Date(c.created_at) >= new Date(thirtyDaysAgoIso);
+  }).length;
+
+  const newContacts7d = contactRows.filter((c) => {
+    if (!c.created_at) return false;
+    return new Date(c.created_at) >= new Date(sevenDaysAgoIso);
+  }).length;
+
+  const newCompanies30d = companyRows.filter((c) => {
+    if (!c.created_at) return false;
+    return new Date(c.created_at) >= new Date(thirtyDaysAgoIso);
+  }).length;
+
+  const visitorsToday = visitors?.visitors_today ?? 0;
+  const visitors7d = visitors?.visitors_7d ?? 0;
+  const visitors30d = visitors?.visitors_30d ?? 0;
+
+  const contactConversion30d =
+    visitors30d > 0 ? (newContacts30d / visitors30d) * 100 : 0;
+
+  const contactConversion7d =
+    visitors7d > 0 ? (newContacts7d / visitors7d) * 100 : 0;
+
+  // Revenue total for the legacy card
+  const revenueTotal = normalizedRevenue.reduce((sum, r) => sum + r.amount, 0);
+
+  // My todo
   const { data: myTodoData } = await supabase
     .from("tasks")
     .select("task_id,title,status,due_at,opportunity_id")
@@ -182,6 +399,41 @@ export default async function DashboardHome() {
     due_at: string | null;
     opportunity_id: string | null;
   }>;
+
+  // AI-style CEO insights
+  const ceoInsights: string[] = [];
+
+  if (visitors30d > 0 && newContacts30d === 0) {
+    ceoInsights.push("Traffic is coming in, but 30-day lead capture is zero. Tighten your website conversion flow immediately.");
+  }
+
+  if (contactConversion30d > 0 && contactConversion30d < 2) {
+    ceoInsights.push(`Visitor-to-lead conversion is only ${pct(contactConversion30d)} over 30 days. Marketing traffic is not converting strongly enough yet.`);
+  }
+
+  if (weightedPipeline > 0) {
+    ceoInsights.push(`Weighted pipeline is ${money(weightedPipeline)}. That is the more realistic near-term revenue view than raw pipeline alone.`);
+  }
+
+  if (closingThisMonth > 0) {
+    ceoInsights.push(`${money(closingThisMonth)} is currently scheduled to close this month. Push those deals hard before month-end.`);
+  }
+
+  if (atRiskProjects > 0) {
+    ceoInsights.push(`${fmt(atRiskProjects)} project(s) are marked yellow/red. Delivery risk is creeping into the CEO lane.`);
+  }
+
+  if (overdueTasks > 0) {
+    ceoInsights.push(`${fmt(overdueTasks)} overdue task(s) need attention. Execution drag will eventually affect client trust and revenue.`);
+  }
+
+  if (revenueThisMonth === 0 && openPipeline > 0) {
+    ceoInsights.push("Pipeline exists, but recognized revenue this month is still low. Prioritize closing and cash collection.");
+  }
+
+  if (!ceoInsights.length) {
+    ceoInsights.push("The business is showing healthy balance across traffic, sales, delivery, and execution. Keep pressure on consistency.");
+  }
 
   const tools = [
     { label: "Meetings", href: "/dashboard/meetings" },
@@ -266,15 +518,193 @@ export default async function DashboardHome() {
           </div>
 
           <div className="mt-5 text-xs text-gray-500">
-            Next: profile collection system, real heatmap, and CEO brief notifications.
+            Next: live revenue input flow, company intelligence actions, and CEO notifications.
           </div>
         </div>
       </section>
 
-<ToLeaveList />
- 
-      {/* CEO Overview */}
+      <ToLeaveList />
+
+      {/* Existing CEO overview module */}
       <CeoOverview />
+
+      {/* NEW: CEO Growth + Revenue + Conversion */}
+      <section className="fw-card-strong p-7">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="text-lg font-semibold text-gray-900">CEO Growth Dashboard</div>
+            <div className="mt-1 text-sm text-gray-600">
+              Traffic, lead conversion, pipeline, revenue, delivery risk, and execution in one view.
+            </div>
+          </div>
+          <div className="text-xs text-gray-500">
+            Account scoped: <span className="font-semibold">{accountName}</span>
+          </div>
+        </div>
+
+        {/* Top KPI row */}
+        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Link href="/dashboard/reports/analytics" className="block">
+            <MetricCard
+              title="Website Visitors"
+              value={visitors ? fmt(visitorsToday) : "—"}
+              sub={visitors ? `7d: ${fmt(visitors7d)} · 30d: ${fmt(visitors30d)}` : "GA4 not connected"}
+              note={visitors ? "Live GA4 active users." : "Connect GA4 to populate."}
+            />
+          </Link>
+
+          <Link href="/dashboard/contacts" className="block">
+            <MetricCard
+              title="Lead Conversion"
+              value={pct(contactConversion30d)}
+              sub={`New leads 30d: ${fmt(newContacts30d)}`}
+              note="Contacts created in Freshware ÷ 30-day visitors."
+            />
+          </Link>
+
+          <Link href="/dashboard/opportunities" className="block">
+            <MetricCard
+              title="Weighted Pipeline"
+              value={money(weightedPipeline)}
+              sub={`Open pipeline: ${money(openPipeline)}`}
+              note="Probability-adjusted forecast from opportunities."
+            />
+          </Link>
+
+          <Link href="/dashboard/revenue" className="block">
+            <MetricCard
+              title="Revenue This Month"
+              value={money(revenueThisMonth)}
+              sub={`YTD: ${money(revenueYtd)}`}
+              note="Recognized revenue based on revenue_entries."
+            />
+          </Link>
+        </div>
+
+        {/* Secondary KPI row */}
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Link href="/dashboard/opportunities" className="block">
+            <MetricCard
+              title="Closing This Month"
+              value={money(closingThisMonth)}
+              sub={`Closed won: ${money(closedWonThisMonth)}`}
+              note="Deals expected to close in the current month."
+            />
+          </Link>
+
+          <Link href="/dashboard/projects" className="block">
+            <MetricCard
+              title="Project Health"
+              value={fmt(atRiskProjects)}
+              sub={`At risk · Active: ${fmt(activeProjects)}`}
+              note="Projects currently flagged yellow or red."
+            />
+          </Link>
+
+          <Link href="/dashboard/tasks" className="block">
+            <MetricCard
+              title="Execution Pressure"
+              value={fmt(overdueTasks)}
+              sub={`Due today: ${fmt(dueTodayTasks)}`}
+              note="Overdue tasks and tasks due today."
+            />
+          </Link>
+
+          <Link href="/dashboard/contacts" className="block">
+            <MetricCard
+              title="Growth Inputs"
+              value={fmt(newContacts7d)}
+              sub={`Contacts 7d · Companies 30d: ${fmt(newCompanies30d)}`}
+              note="New lead flow entering the ecosystem."
+            />
+          </Link>
+        </div>
+
+        {/* Revenue / team summary row */}
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="fw-card p-6">
+            <div className="text-sm font-semibold text-gray-900">Revenue Summary</div>
+            <div className="mt-4 space-y-3 text-sm text-gray-700">
+              <div className="flex items-center justify-between gap-3">
+                <span>This month</span>
+                <span className="font-semibold text-gray-900">{money(revenueThisMonth)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Last month</span>
+                <span className="font-semibold text-gray-900">{money(revenueLastMonth)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Year to date</span>
+                <span className="font-semibold text-gray-900">{money(revenueYtd)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Average entry</span>
+                <span className="font-semibold text-gray-900">{money(avgDealSize)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="fw-card p-6">
+            <div className="text-sm font-semibold text-gray-900">Sales Summary</div>
+            <div className="mt-4 space-y-3 text-sm text-gray-700">
+              <div className="flex items-center justify-between gap-3">
+                <span>Open opportunities</span>
+                <span className="font-semibold text-gray-900">{fmt(openOppCount)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Total opportunities</span>
+                <span className="font-semibold text-gray-900">{fmt(totalOppCount)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Weighted pipeline</span>
+                <span className="font-semibold text-gray-900">{money(weightedPipeline)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Meetings booked</span>
+                <span className="font-semibold text-gray-900">{fmt(meetingsBooked)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="fw-card p-6">
+            <div className="text-sm font-semibold text-gray-900">Execution Summary</div>
+            <div className="mt-4 space-y-3 text-sm text-gray-700">
+              <div className="flex items-center justify-between gap-3">
+                <span>Total tasks</span>
+                <span className="font-semibold text-gray-900">{fmt(totalTasks)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Blocked tasks</span>
+                <span className="font-semibold text-gray-900">{fmt(blockedTasks)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Completed this week</span>
+                <span className="font-semibold text-gray-900">{fmt(completedThisWeek)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span>Projects completed this month</span>
+                <span className="font-semibold text-gray-900">{fmt(completedProjectsThisMonth)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* AI insights */}
+        <div className="mt-6 rounded-2xl border border-black/10 bg-white/70 p-6">
+          <div className="text-sm font-semibold text-gray-900">AI CEO Insights</div>
+          <div className="mt-1 text-sm text-gray-600">
+            Strategic highlights based on current Freshware and GA4 data.
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            {ceoInsights.map((insight, index) => (
+              <div key={index} className="rounded-2xl border border-black/10 bg-white p-4 text-sm text-gray-700">
+                {insight}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* Tools */}
       <section className="fw-card-strong p-7">
@@ -303,7 +733,7 @@ export default async function DashboardHome() {
         ) : null}
       </section>
 
-      {/* Executive Overview */}
+      {/* Legacy Executive Overview kept, but now live and stronger */}
       <section className="fw-card-strong p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -318,47 +748,114 @@ export default async function DashboardHome() {
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    <Link href="/dashboard/reports/analytics" className="block">
+          <Link href="/dashboard/reports/analytics" className="block">
             <MetricCard
               title="Site Visitors Today"
-              value={visitors ? fmt(visitors.visitors_today) : "—"}
-              sub={visitors ? `7 days: ${fmt(visitors.visitors_7d)}  30 days: ${fmt(visitors.visitors_30d)}` : "7 days: —  30 days: —"}
+              value={visitors ? fmt(visitorsToday) : "—"}
+              sub={visitors ? `7 days: ${fmt(visitors7d)}  30 days: ${fmt(visitors30d)}` : "7 days: —  30 days: —"}
               note={visitors ? "GA4 activeUsers connected." : "GA4 not connected or env vars missing."}
             />
           </Link>
 
           <Link href="/dashboard/meetings" className="block">
-            <MetricCard title="Meetings Booked" value={fmt(meetingsBooked)} sub={`YCBM: ${fmt(ycbmBooked)}`} note="Freshware meetings + optional YCBM." />
+            <MetricCard
+              title="Meetings Booked"
+              value={fmt(meetingsBooked)}
+              sub={`YCBM: ${fmt(ycbmBooked)}`}
+              note="Freshware meetings + optional YCBM."
+            />
           </Link>
 
           <Link href="/dashboard/opportunities" className="block">
-            <MetricCard title="Prospects Open" value={fmt(openOppCount)} sub={`Open pipeline: $${fmt(openPipeline)}`} note="Opportunities not won/lost." />
+            <MetricCard
+              title="Prospects Open"
+              value={fmt(openOppCount)}
+              sub={`Open pipeline: ${money(openPipeline)}`}
+              note="Opportunities not won/lost."
+            />
           </Link>
 
           <Link href="/dashboard/projects" className="block">
-            <MetricCard title="Active Projects" value={fmt(activeProjects)} sub={`Total projects: ${fmt(totalProjects)}`} note="Status not done/closed/completed/cancelled." />
+            <MetricCard
+              title="Active Projects"
+              value={fmt(activeProjects)}
+              sub={`Total projects: ${fmt(totalProjects)}`}
+              note="Status not done/closed/completed/cancelled."
+            />
           </Link>
 
           <Link href="/dashboard/opportunities" className="block">
-            <MetricCard title="Total Opportunities" value={fmt(totalOppCount)} sub="Open + won + lost" note="Account scoped." />
+            <MetricCard
+              title="Total Opportunities"
+              value={fmt(totalOppCount)}
+              sub="Open + won + lost"
+              note="Account scoped."
+            />
           </Link>
 
           <Link href="/dashboard/tasks" className="block">
-            <MetricCard title="Total Tasks" value={fmt(totalTasks)} sub="All tasks in account" note="Account scoped." />
+            <MetricCard
+              title="Total Tasks"
+              value={fmt(totalTasks)}
+              sub="All tasks in account"
+              note="Account scoped."
+            />
           </Link>
 
           <Link href="/admin/users" className="block">
-            <MetricCard title="Total Users" value={fmt(totalUsers)} sub="Users in this account" note="Account scoped." />
+            <MetricCard
+              title="Total Users"
+              value={fmt(totalUsers)}
+              sub="Users in this account"
+              note="Account scoped."
+            />
           </Link>
 
           <Link href="/dashboard/revenue" className="block">
             <MetricCard
               title="Revenue"
-              value={isAdmin ? (revenueTotal === null ? "—" : `$${fmt(revenueTotal)}`) : "Restricted"}
+              value={isAdmin ? money(revenueTotal) : "Restricted"}
               sub={isAdmin ? "From revenue_entries" : "CEO/Admin only"}
-              note={isAdmin ? "Connect revenue entries to dashboards." : "Only visible to CEO/Admin."}
+              note={isAdmin ? "Connected to revenue model." : "Only visible to CEO/Admin."}
             />
           </Link>
+        </div>
+      </section>
+
+      {/* My task strip */}
+      <section className="fw-card-strong p-7">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-lg font-semibold text-gray-900">My Assigned Tasks</div>
+            <div className="mt-1 text-sm text-gray-600">
+              Your current open tasks across opportunities and projects.
+            </div>
+          </div>
+          <Link href="/dashboard/tasks" className="fw-btn text-sm">
+            Open Tasks
+          </Link>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {myTodo.length ? (
+            myTodo.map((task) => (
+              <div key={task.task_id} className="fw-card p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-900">
+                      {task.title || "Untitled task"}
+                    </div>
+                    <div className="mt-1 text-xs text-gray-500">
+                      Status: {task.status || "New"} · Due: {fmtDue(task.due_at)}
+                    </div>
+                  </div>
+                  <span className="fw-chip">{task.status || "New"}</span>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-sm text-gray-600">You have no currently assigned open tasks.</div>
+          )}
         </div>
       </section>
     </div>

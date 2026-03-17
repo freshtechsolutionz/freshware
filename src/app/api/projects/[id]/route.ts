@@ -227,4 +227,68 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({ project: data }, { status: 200 });
+  
+}
+
+export async function DELETE(_req: Request, context: { params: Promise<{ id: string }> }) {
+  const { supabase, user, profile } = await requireViewer();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!profile || profile.role === "PENDING") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!profile.account_id) {
+    return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
+  }
+  if (!isStaff(profile.role)) {
+    return NextResponse.json({ error: "Staff only" }, { status: 403 });
+  }
+
+  const { id } = await context.params;
+
+  const { data: existing, error: existingErr } = await supabase
+    .from("projects")
+    .select("id, account_id, name")
+    .eq("id", id)
+    .eq("account_id", profile.account_id)
+    .maybeSingle();
+
+  if (existingErr) return NextResponse.json({ error: existingErr.message }, { status: 500 });
+  if (!existing) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+
+  // Delete child / related data first
+  const deletes = await Promise.all([
+    supabase.from("tasks").delete().eq("account_id", profile.account_id).eq("project_id", id),
+    supabase.from("project_updates").delete().eq("account_id", profile.account_id).eq("project_id", id),
+    supabase.from("project_milestones").delete().eq("account_id", profile.account_id).eq("project_id", id),
+    supabase.from("project_team_members").delete().eq("account_id", profile.account_id).eq("project_id", id),
+    supabase.from("project_financials").delete().eq("account_id", profile.account_id).eq("project_id", id),
+
+    // Revenue tied directly to this project should go away too
+    supabase.from("revenue_entries").delete().eq("account_id", profile.account_id).eq("project_id", id),
+  ]);
+
+  for (const result of deletes) {
+    if (result.error) {
+      return NextResponse.json({ error: result.error.message }, { status: 500 });
+    }
+  }
+
+  const { error: deleteProjectErr } = await supabase
+    .from("projects")
+    .delete()
+    .eq("id", id)
+    .eq("account_id", profile.account_id);
+
+  if (deleteProjectErr) {
+    return NextResponse.json({ error: deleteProjectErr.message }, { status: 500 });
+  }
+
+  return NextResponse.json(
+    {
+      ok: true,
+      deletedProjectId: id,
+      message: `Project "${existing.name || id}" deleted successfully.`,
+    },
+    { status: 200 }
+  );
 }

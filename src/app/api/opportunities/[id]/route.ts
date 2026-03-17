@@ -3,6 +3,11 @@ import { requireViewer } from "@/lib/supabase/route";
 
 export const runtime = "nodejs";
 
+function isAdmin(role: string | null | undefined) {
+  const r = (role || "").toUpperCase();
+  return r === "CEO" || r === "ADMIN";
+}
+
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
   const { supabase, user, profile } = await requireViewer();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -31,7 +36,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     return NextResponse.json({ error: "Opportunity not found." }, { status: 404 });
   }
 
-  const update: any = {};
+  const update: Record<string, any> = {};
 
   if ("name" in body) update.name = body.name ? String(body.name).trim() : null;
   if ("stage" in body) update.stage = body.stage ? String(body.stage).trim() : null;
@@ -39,11 +44,20 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if ("serviceLine" in body) update.service_line = body.serviceLine ? String(body.serviceLine).trim() : null;
   if ("service_line" in body) update.service_line = body.service_line ? String(body.service_line).trim() : null;
 
-  if ("amount" in body) update.amount = typeof body.amount === "number" ? body.amount : Number(body.amount) || 0;
-  if ("probability" in body) update.probability = body.probability == null ? null : Number(body.probability) || 0;
+  if ("amount" in body) {
+    update.amount = typeof body.amount === "number" ? body.amount : Number(body.amount) || 0;
+  }
 
-  if ("close_date" in body) update.close_date = body.close_date ? String(body.close_date).slice(0, 10) : null;
-  if ("closeDate" in body) update.close_date = body.closeDate ? String(body.closeDate).slice(0, 10) : null;
+  if ("probability" in body) {
+    update.probability = body.probability == null ? null : Number(body.probability) || 0;
+  }
+
+  if ("close_date" in body) {
+    update.close_date = body.close_date ? String(body.close_date).slice(0, 10) : null;
+  }
+  if ("closeDate" in body) {
+    update.close_date = body.closeDate ? String(body.closeDate).slice(0, 10) : null;
+  }
 
   if ("company_id" in body) {
     update.company_id = body.company_id ? String(body.company_id).trim() : null;
@@ -98,8 +112,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     }
   }
 
-  const isAdmin = profile.role === "CEO" || profile.role === "ADMIN";
-  if (isAdmin && "account_id" in body) update.account_id = body.account_id || null;
+  const adminUser = isAdmin(profile.role);
+  if (adminUser && "account_id" in body) {
+    update.account_id = body.account_id || null;
+  }
 
   update.last_activity_at = new Date().toISOString();
 
@@ -119,30 +135,73 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
 
 export async function DELETE(_req: Request, context: { params: Promise<{ id: string }> }) {
   const { supabase, user, profile } = await requireViewer();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!profile || profile.role === "PENDING") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const isAdmin = profile.role === "CEO" || profile.role === "ADMIN";
-  if (!isAdmin) return NextResponse.json({ error: "Admins only" }, { status: 403 });
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!profile || profile.role === "PENDING") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (!profile.account_id) {
     return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
+  }
+  if (!isAdmin(profile.role)) {
+    return NextResponse.json({ error: "Admins only" }, { status: 403 });
   }
 
   const { id } = await context.params;
 
-  const patch = {
-    deleted_at: new Date().toISOString(),
-    deleted_by: user.id,
-  };
-
-  const { error } = await supabase
+  const { data: existing, error: existingErr } = await supabase
     .from("opportunities")
-    .update(patch)
+    .select("id, name, account_id")
     .eq("id", id)
     .eq("account_id", profile.account_id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (existingErr) return NextResponse.json({ error: existingErr.message }, { status: 500 });
+  if (!existing) return NextResponse.json({ error: "Opportunity not found." }, { status: 404 });
+
+  const accountId = profile.account_id;
+
+  // Clean up linked records that should disappear with test/fake opportunities
+  const cleanupResults = await Promise.all([
+    supabase
+      .from("tasks")
+      .delete()
+      .eq("account_id", accountId)
+      .eq("opportunity_id", id),
+
+    supabase
+      .from("revenue_entries")
+      .delete()
+      .eq("account_id", accountId)
+      .eq("opportunity_id", id),
+  ]);
+
+  for (const result of cleanupResults) {
+    if (result.error) {
+      return NextResponse.json({ error: result.error.message }, { status: 500 });
+    }
+  }
+
+  // Soft delete the opportunity itself
+  const { error } = await supabase
+    .from("opportunities")
+    .update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: user.id,
+      last_activity_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("account_id", accountId)
     .is("deleted_at", null);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ ok: true }, { status: 200 });
+  return NextResponse.json(
+    {
+      ok: true,
+      message: `Opportunity "${existing.name || id}" deleted successfully.`,
+    },
+    { status: 200 }
+  );
 }
