@@ -72,7 +72,7 @@ export default async function LeadGenerationPage() {
     <div className="space-y-6">
       <PageHeader
         title="Lead Generation"
-        subtitle="Generate, score, qualify, and convert lead prospects into company profiles and opportunities."
+        subtitle="Generate, import, analyze, score, and convert lead prospects into company profiles and opportunities."
         right={
           <div className="flex flex-wrap gap-2">
             <a href="/dashboard/companies" className="fw-btn text-sm">

@@ -21,6 +21,12 @@ function titleCaseService(service: string | null | undefined) {
     .join(" ");
 }
 
+function toArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((v) => String(v)).filter(Boolean);
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  return [];
+}
+
 export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> }
@@ -51,10 +57,28 @@ export async function POST(
     let companyId = lead.converted_company_id as string | null;
     let opportunityId = lead.converted_opportunity_id as string | null;
 
+    const websiteAnalysis = lead.website_analysis || null;
+    const digitalMaturity =
+      websiteAnalysis?.digital_maturity ||
+      websiteAnalysis?.website_analysis?.digital_maturity ||
+      null;
+
+    const analysisSignals = [
+      ...toArray(websiteAnalysis?.signals),
+      ...toArray(websiteAnalysis?.website_analysis?.signals),
+      ...toArray(websiteAnalysis?.opportunities),
+      ...toArray(websiteAnalysis?.website_analysis?.opportunities),
+    ];
+
+    const analysisRisks = [
+      ...toArray(websiteAnalysis?.risks),
+      ...toArray(websiteAnalysis?.website_analysis?.risks),
+    ];
+
     if (createCompany && !companyId) {
       const { data: existingCompany } = await supabase
         .from("companies")
-        .select("id")
+        .select("id, ai_company_info")
         .eq("account_id", profile.account_id)
         .ilike("name", lead.company_name)
         .limit(1)
@@ -62,7 +86,82 @@ export async function POST(
 
       if (existingCompany?.id) {
         companyId = existingCompany.id;
+
+        const existingInfo = existingCompany.ai_company_info || {};
+        const mergedInfo = {
+          ...existingInfo,
+          executiveSummary: lead.ai_summary || existingInfo.executiveSummary || "",
+          marketPositioning: lead.ai_reasoning || existingInfo.marketPositioning || "",
+          likelyNeeds: Array.from(
+            new Set([
+              ...toArray(existingInfo.likelyNeeds),
+              ...toArray(lead.detected_need),
+            ])
+          ),
+          salesAngles: Array.from(
+            new Set([
+              ...toArray(existingInfo.salesAngles),
+              ...toArray(lead.outreach_angle),
+            ])
+          ),
+          risks: Array.from(
+            new Set([
+              ...toArray(existingInfo.risks),
+              ...analysisRisks,
+            ])
+          ),
+          recommendedNextSteps: Array.from(
+            new Set([
+              ...toArray(existingInfo.recommendedNextSteps),
+              "Review lead and qualify for a discovery call.",
+              "Use website analysis insights during outreach.",
+            ])
+          ),
+          leadWebsiteAnalysis: websiteAnalysis,
+          leadScores: {
+            fit: lead.fit_score,
+            need: lead.need_score,
+            urgency: lead.urgency_score,
+            access: lead.access_score,
+            total: lead.total_score,
+          },
+        };
+
+        await supabase
+          .from("companies")
+          .update({
+            ai_company_info: mergedInfo,
+            ai_company_info_generated_at: new Date().toISOString(),
+            ai_company_info_model: lead.website_analysis_model || lead.generation_mode || "lead-conversion-seed",
+            relationship_summary: lead.ai_summary || null,
+            top_pain_points: lead.detected_need || null,
+            website: lead.website || null,
+            website_analysis: websiteAnalysis,
+            digital_maturity: digitalMaturity,
+          })
+          .eq("id", companyId)
+          .eq("account_id", profile.account_id);
       } else {
+        const aiCompanyInfo = {
+          executiveSummary: lead.ai_summary || "",
+          marketPositioning: lead.ai_reasoning || "",
+          likelyNeeds: toArray(lead.detected_need),
+          salesAngles: toArray(lead.outreach_angle),
+          risks: analysisRisks,
+          recommendedNextSteps: [
+            "Review lead and qualify for a discovery call.",
+            "Use website analysis insights during outreach.",
+          ],
+          leadWebsiteAnalysis: websiteAnalysis,
+          leadScores: {
+            fit: lead.fit_score,
+            need: lead.need_score,
+            urgency: lead.urgency_score,
+            access: lead.access_score,
+            total: lead.total_score,
+          },
+        };
+
         const { data: createdCompany, error: companyCreateErr } = await supabase
           .from("companies")
           .insert({
@@ -85,16 +184,11 @@ export async function POST(
             priority_level: lead.total_score >= 80 ? "HIGH" : lead.total_score >= 60 ? "MEDIUM" : "LOW",
             relationship_summary: lead.ai_summary,
             initial_engagement_source: lead.source,
-            ai_company_info: {
-              executiveSummary: lead.ai_summary || "",
-              marketPositioning: lead.ai_reasoning || "",
-              likelyNeeds: lead.detected_need ? [lead.detected_need] : [],
-              salesAngles: lead.outreach_angle ? [lead.outreach_angle] : [],
-              risks: [],
-              recommendedNextSteps: ["Review lead and qualify for a discovery call."],
-            },
+            ai_company_info: aiCompanyInfo,
             ai_company_info_generated_at: new Date().toISOString(),
-            ai_company_info_model: "lead-conversion-seed",
+            ai_company_info_model: lead.website_analysis_model || lead.generation_mode || "lead-conversion-seed",
+            website_analysis: websiteAnalysis,
+            digital_maturity: digitalMaturity,
           })
           .select("id")
           .single();
@@ -130,7 +224,7 @@ export async function POST(
           service_line: serviceLine,
           stage: "new",
           amount: 0,
-          probability: Math.max(5, Math.min(60, Number(lead.total_score || 25))),
+          probability: Math.max(5, Math.min(95, Number(lead.total_score || 25))),
           close_date: null,
           name: `${lead.company_name} - ${titleCaseService(serviceLine)} Opportunity`,
         })
@@ -147,7 +241,11 @@ export async function POST(
       opportunityId = createdOpportunity.id;
     }
 
-    const nextStatus = createOpportunity ? "converted_opportunity" : createCompany ? "converted_company" : lead.status;
+    const nextStatus = createOpportunity
+      ? "converted_opportunity"
+      : createCompany
+      ? "converted_company"
+      : lead.status;
 
     const { error: updateErr } = await supabase
       .from("lead_prospects")
