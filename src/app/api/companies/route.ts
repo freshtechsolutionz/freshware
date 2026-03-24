@@ -8,6 +8,13 @@ function isStaff(role: string | null | undefined) {
   return ["CEO", "ADMIN", "STAFF", "OPS", "SALES", "MARKETING"].includes(r);
 }
 
+function getValue(body: any, key: string) {
+  const v = body?.[key];
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  return s ? s : null;
+}
+
 export async function GET() {
   const { supabase, user, profile } = await requireViewer();
 
@@ -34,8 +41,22 @@ export async function POST(req: Request) {
   if (!profile.account_id) return NextResponse.json({ error: "Missing account_id" }, { status: 400 });
   if (!isStaff(profile.role)) return NextResponse.json({ error: "Staff only" }, { status: 403 });
 
-  const body = await req.json().catch(() => ({}));
-  const name = body?.name ? String(body.name).trim() : "";
+  const contentType = req.headers.get("content-type") || "";
+  let body: any = {};
+
+  if (contentType.includes("application/json")) {
+    body = await req.json().catch(() => ({}));
+  } else if (
+    contentType.includes("application/x-www-form-urlencoded") ||
+    contentType.includes("multipart/form-data")
+  ) {
+    const form = await req.formData().catch(() => null);
+    if (form) {
+      body = Object.fromEntries(form.entries());
+    }
+  }
+
+  const name = getValue(body, "name");
 
   if (!name) {
     return NextResponse.json({ error: "Company name is required." }, { status: 400 });
@@ -44,21 +65,21 @@ export async function POST(req: Request) {
   const insertRow = {
     account_id: profile.account_id,
     name,
-    legal_name: body?.legal_name ? String(body.legal_name).trim() : null,
-    website: body?.website ? String(body.website).trim() : null,
-    linkedin_url: body?.linkedin_url ? String(body.linkedin_url).trim() : null,
-    email: body?.email ? String(body.email).trim() : null,
-    phone: body?.phone ? String(body.phone).trim() : null,
-    city: body?.city ? String(body.city).trim() : null,
-    state: body?.state ? String(body.state).trim() : null,
-    country: body?.country ? String(body.country).trim() : null,
-    industry: body?.industry ? String(body.industry).trim() : null,
-    customer_segment: body?.customer_segment ? String(body.customer_segment).trim() : null,
-    lifecycle_stage: body?.lifecycle_stage ? String(body.lifecycle_stage).trim() : null,
-    priority_level: body?.priority_level ? String(body.priority_level).trim() : null,
-    internal_account_owner: body?.internal_account_owner ? String(body.internal_account_owner).trim() : null,
-    primary_business_goals: body?.primary_business_goals ? String(body.primary_business_goals).trim() : null,
-    top_pain_points: body?.top_pain_points ? String(body.top_pain_points).trim() : null,
+    legal_name: getValue(body, "legal_name"),
+    website: getValue(body, "website"),
+    linkedin_url: getValue(body, "linkedin_url"),
+    email: getValue(body, "email"),
+    phone: getValue(body, "phone"),
+    city: getValue(body, "city"),
+    state: getValue(body, "state"),
+    country: getValue(body, "country"),
+    industry: getValue(body, "industry"),
+    customer_segment: getValue(body, "customer_segment"),
+    lifecycle_stage: getValue(body, "lifecycle_stage"),
+    priority_level: getValue(body, "priority_level"),
+    internal_account_owner: getValue(body, "internal_account_owner"),
+    primary_business_goals: getValue(body, "primary_business_goals"),
+    top_pain_points: getValue(body, "top_pain_points"),
   };
 
   const { data, error } = await supabase
@@ -69,5 +90,12 @@ export async function POST(req: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ company: data }, { status: 201 });
+  if (contentType.includes("application/json")) {
+    return NextResponse.json({ company: data }, { status: 201 });
+  }
+
+  return NextResponse.redirect(
+    new URL(`/dashboard/companies/${data.id}?created=1`, "http://localhost:3000"),
+    { status: 303 }
+  );
 }

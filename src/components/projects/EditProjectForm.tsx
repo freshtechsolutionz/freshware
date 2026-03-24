@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 type ProjectRow = {
   id: string;
   opportunity_id: string | null;
+  company_id: string | null;
   name: string | null;
   status: string | null;
   stage: string | null;
@@ -106,11 +107,13 @@ export default function EditProjectForm({
   initialFinancials,
   ownerOptions,
   opportunityOptions,
+  companyOptions,
 }: {
   initial: ProjectRow;
   initialFinancials: FinancialsRow;
   ownerOptions: Option[];
   opportunityOptions: Option[];
+  companyOptions: Option[];
 }) {
   const router = useRouter();
 
@@ -124,6 +127,7 @@ export default function EditProjectForm({
 
   const [startDate, setStartDate] = useState(dateInputValue(initial.start_date));
   const [dueDate, setDueDate] = useState(dateInputValue(initial.due_date));
+  const [companyId, setCompanyId] = useState(initial.company_id || "");
 
   const [deliveryCost, setDeliveryCost] = useState(
     initial.delivery_cost == null ? "" : String(initial.delivery_cost)
@@ -213,6 +217,7 @@ export default function EditProjectForm({
           progress_percent: progressPercent,
           start_date: startDate || null,
           due_date: dueDate || null,
+          company_id: companyId || null,
           support_cost: supportMonthlyCost || null,
           support_due_date: supportNextDueDate || null,
           delivery_cost: deliveryCost || null,
@@ -261,7 +266,7 @@ export default function EditProjectForm({
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-3">
-        <div className="rounded-2xl border bg-white p-6 shadow-sm xl:col-span-2 space-y-4">
+        <div className="space-y-4 rounded-2xl border bg-white p-6 shadow-sm xl:col-span-2">
           <div className="text-sm font-semibold">Project Core</div>
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -272,6 +277,30 @@ export default function EditProjectForm({
                 onChange={(e) => setName(e.target.value)}
                 className="w-full rounded-xl border px-3 py-2 text-sm"
               />
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-sm font-medium">Company Profile</label>
+                <Link
+                  href="/dashboard/companies?new=1"
+                  className="text-xs font-semibold text-blue-700 underline underline-offset-4"
+                >
+                  + Create New Company
+                </Link>
+              </div>
+              <select
+                value={companyId}
+                onChange={(e) => setCompanyId(e.target.value)}
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+              >
+                <option value="">— No company linked —</option>
+                {companyOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="space-y-1">
@@ -461,7 +490,7 @@ export default function EditProjectForm({
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-white p-6 shadow-sm space-y-4">
+        <div className="space-y-4 rounded-2xl border bg-white p-6 shadow-sm">
           <div className="text-sm font-semibold">Progress Preview</div>
 
           <div className="rounded-2xl border p-4">
@@ -518,7 +547,7 @@ export default function EditProjectForm({
         </div>
       </div>
 
-      <div className="rounded-2xl border bg-white p-6 shadow-sm space-y-4">
+      <div className="space-y-4 rounded-2xl border bg-white p-6 shadow-sm">
         <div className="text-sm font-semibold">Financial Controls</div>
 
         <div className="grid gap-4 md:grid-cols-5">

@@ -228,10 +228,14 @@ export default function HomeClient() {
                 Request access
               </Link>
 
-              <div className="pt-2 text-xs text-gray-500">
-                Invite-only: if you don’t have access, request an invitation. If you forgot your
-                password, enter your email above and click Forgot password.
-              </div>
+              <div className="pt-2 text-xs text-gray-500 text-center">
+  Invite-only: if you don’t have access,{" "}
+  <Link href="/request-access" className="font-semibold text-black">
+    request an invitation
+  </Link>.
+  <br />
+  If you forgot your password, enter your email and click “Forgot password”.
+</div>
             </form>
           </div>
         </div>

@@ -2,11 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({
-    request: {
-      headers: request.headers,
-    },
-  });
+  let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,40 +13,43 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet) {
-          // Update the request cookies (so downstream sees them)
-          for (const { name, value } of cookiesToSet) {
-            request.cookies.set(name, value);
-          }
-
-          // Update the response cookies (so the browser stores them)
-          response = NextResponse.next({
-            request: {
-              headers: request.headers,
-            },
-          });
-
-          for (const { name, value, options } of cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
             response.cookies.set(name, value, options);
-          }
+          });
         },
       },
     }
   );
 
-  // IMPORTANT: this refreshes the auth session if needed
-  await supabase.auth.getUser();
+  let user = null;
+
+  try {
+    const { data } = await supabase.auth.getUser();
+    user = data?.user ?? null;
+  } catch {
+    user = null;
+  }
+
+  const path = request.nextUrl.pathname;
+
+  // ✅ ROOT handling (THIS FIXES MOBILE ISSUE)
+  if (path === "/") {
+    if (user) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+    return response; // let homepage render
+  }
+
+  // ✅ Protect dashboard
+  if (path.startsWith("/dashboard") && !user) {
+    const loginUrl = new URL("/portal", request.url);
+    loginUrl.searchParams.set("next", path);
+    return NextResponse.redirect(loginUrl);
+  }
 
   return response;
 }
 
 export const config = {
-  matcher: [
-    /*
-      Run middleware on:
-      - dashboard + portal pages
-      - api routes (so requireViewer can always read cookies)
-      Exclude static assets
-    */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
-  ],
+  matcher: ["/", "/dashboard/:path*"],
 };

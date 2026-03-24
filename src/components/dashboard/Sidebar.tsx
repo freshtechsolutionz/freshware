@@ -18,7 +18,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard/tasks", label: "Tasks" },
   { href: "/dashboard/reports/projects-health", label: "Project Health" },
   { href: "/dashboard/companies", label: "Company Profiles" },
-  { href: "/dashboard/lead-generator", label: "Lead Generator", soon: true },
+  { href: "/dashboard/lead-generation", label: "Lead Generator", soon: true },
   { href: "/dashboard/revenue", label: "Revenue" },
 ];
 

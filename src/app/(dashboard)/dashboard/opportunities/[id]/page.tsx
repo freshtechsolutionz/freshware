@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 type Opportunity = {
   id: string;
   account_id: string | null;
+  company_id: string | null;
   contact_id: string | null;
   owner_user_id: string | null;
   service_line: string | null;
@@ -23,6 +24,12 @@ type Opportunity = {
 
 type Account = { id: string; name: string | null };
 type Contact = { id: string; name: string | null; email: string | null };
+type Company = {
+  id: string;
+  name: string | null;
+  website: string | null;
+  industry: string | null;
+};
 
 export default async function OpportunityPage({
   params,
@@ -49,7 +56,7 @@ export default async function OpportunityPage({
   const { data: opp, error: oppErr } = await supabase
     .from("opportunities")
     .select(
-      "id,account_id,contact_id,owner_user_id,service_line,stage,amount,probability,close_date,last_activity_at,created_at,name,deleted_at"
+      "id,account_id,company_id,contact_id,owner_user_id,service_line,stage,amount,probability,close_date,last_activity_at,created_at,name,deleted_at"
     )
     .eq("id", id)
     .maybeSingle();
@@ -85,14 +92,26 @@ export default async function OpportunityPage({
         .maybeSingle()
     : { data: null as Contact | null };
 
+  const { data: company } = opportunity.company_id
+    ? await supabase
+        .from("companies")
+        .select("id,name,website,industry")
+        .eq("id", opportunity.company_id)
+        .maybeSingle()
+    : { data: null as Company | null };
+
   return (
     <>
-      <PageHeader title="Opportunity" subtitle="Details, probability, and momentum." />
+      <PageHeader
+        title="Opportunity"
+        subtitle="Details, probability, momentum, and company context."
+      />
       <OpportunityDetailClient
         role={role}
         opportunity={opportunity as any}
         account={account || null}
         contact={contact || null}
+        company={company || null}
       />
     </>
   );

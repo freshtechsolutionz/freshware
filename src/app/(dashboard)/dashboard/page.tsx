@@ -142,7 +142,6 @@ export default async function DashboardHome() {
   const visitors = await getVisitors(baseUrl);
 
   const now = new Date();
-  const monthStart = startOfMonth(now);
   const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const yearStart = startOfYear(now);
   const thirtyDaysAgoIso = daysAgo(30).toISOString();
@@ -246,7 +245,6 @@ export default async function DashboardHome() {
     created_at: string | null;
   }>;
 
-  // Tasks / execution
   const totalTasks = tasksRes.count ?? taskRows.length ?? 0;
   const overdueTasks = taskRows.filter((t) => {
     if (!t.due_at) return false;
@@ -273,7 +271,6 @@ export default async function DashboardHome() {
     (t) => String(t.status || "").toLowerCase() === "blocked"
   ).length;
 
-  // Opportunities / sales
   const openOppRows = oppRows.filter((r) => {
     const s = String(r.stage || "").toLowerCase();
     return s !== "won" && s !== "lost";
@@ -305,7 +302,6 @@ export default async function DashboardHome() {
     return isSameMonth(d, now) ? sum + (Number(r.amount) || 0) : sum;
   }, 0);
 
-  // Projects / health
   const activeProjects = projectRows.filter((r) => {
     const s = String(r.status || "").toLowerCase();
     return !["done", "closed", "completed", "cancelled", "canceled"].includes(s);
@@ -325,7 +321,6 @@ export default async function DashboardHome() {
     return isSameMonth(new Date(r.created_at), now);
   }).length;
 
-  // Revenue
   const normalizedRevenue = revenueRows.map((r) => {
     const dateStr = r.recognized_on || r.entry_date;
     const date = dateStr ? new Date(dateStr) : null;
@@ -352,7 +347,6 @@ export default async function DashboardHome() {
     ? normalizedRevenue.reduce((sum, r) => sum + r.amount, 0) / normalizedRevenue.length
     : 0;
 
-  // Growth / conversion
   const newContacts30d = contactRows.filter((c) => {
     if (!c.created_at) return false;
     return new Date(c.created_at) >= new Date(thirtyDaysAgoIso);
@@ -375,13 +369,8 @@ export default async function DashboardHome() {
   const contactConversion30d =
     visitors30d > 0 ? (newContacts30d / visitors30d) * 100 : 0;
 
-  const contactConversion7d =
-    visitors7d > 0 ? (newContacts7d / visitors7d) * 100 : 0;
-
-  // Revenue total for the legacy card
   const revenueTotal = normalizedRevenue.reduce((sum, r) => sum + r.amount, 0);
 
-  // My todo
   const { data: myTodoData } = await supabase
     .from("tasks")
     .select("task_id,title,status,due_at,opportunity_id")
@@ -400,7 +389,6 @@ export default async function DashboardHome() {
     opportunity_id: string | null;
   }>;
 
-  // AI-style CEO insights
   const ceoInsights: string[] = [];
 
   if (visitors30d > 0 && newContacts30d === 0) {
@@ -441,9 +429,9 @@ export default async function DashboardHome() {
     { label: "Contacts", href: "/dashboard/contacts" },
     { label: "Projects", href: "/dashboard/projects" },
     { label: "Tasks", href: "/dashboard/tasks" },
-    { label: "Project Heat Map", href: "/dashboard/project-heat-map" },
+    { label: "Project Health", href: "/dashboard/reports/projects-health" },
     { label: "Company Profiles", href: "/dashboard/companies" },
-    { label: "Lead Generator", href: "/dashboard/lead-generator" },
+    { label: "Lead Generator", href: "/dashboard/lead-generation" },
     { label: "Revenue", href: "/dashboard/revenue" },
   ];
 
@@ -454,7 +442,6 @@ export default async function DashboardHome() {
 
   return (
     <div className="space-y-10">
-      {/* Header */}
       <section className="fw-card-strong p-7">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
@@ -484,7 +471,6 @@ export default async function DashboardHome() {
         </div>
       </section>
 
-      {/* Agent LEFT + Command Center RIGHT */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <AgentPanel accountId={accountId} accountName={accountName} viewerId={profile.id} />
 
@@ -525,10 +511,8 @@ export default async function DashboardHome() {
 
       <ToLeaveList />
 
-      {/* Existing CEO overview module */}
       <CeoOverview />
 
-      {/* NEW: CEO Growth + Revenue + Conversion */}
       <section className="fw-card-strong p-7">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -542,7 +526,6 @@ export default async function DashboardHome() {
           </div>
         </div>
 
-        {/* Top KPI row */}
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Link href="/dashboard/reports/analytics" className="block">
             <MetricCard
@@ -581,7 +564,6 @@ export default async function DashboardHome() {
           </Link>
         </div>
 
-        {/* Secondary KPI row */}
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Link href="/dashboard/opportunities" className="block">
             <MetricCard
@@ -620,7 +602,6 @@ export default async function DashboardHome() {
           </Link>
         </div>
 
-        {/* Revenue / team summary row */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="fw-card p-6">
             <div className="text-sm font-semibold text-gray-900">Revenue Summary</div>
@@ -689,7 +670,6 @@ export default async function DashboardHome() {
           </div>
         </div>
 
-        {/* AI insights */}
         <div className="mt-6 rounded-2xl border border-black/10 bg-white/70 p-6">
           <div className="text-sm font-semibold text-gray-900">AI CEO Insights</div>
           <div className="mt-1 text-sm text-gray-600">
@@ -706,7 +686,6 @@ export default async function DashboardHome() {
         </div>
       </section>
 
-      {/* Tools */}
       <section className="fw-card-strong p-7">
         <div>
           <div className="text-lg font-semibold text-gray-900">Tools</div>
@@ -733,7 +712,6 @@ export default async function DashboardHome() {
         ) : null}
       </section>
 
-      {/* Legacy Executive Overview kept, but now live and stronger */}
       <section className="fw-card-strong p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -822,7 +800,6 @@ export default async function DashboardHome() {
         </div>
       </section>
 
-      {/* My task strip */}
       <section className="fw-card-strong p-7">
         <div className="flex items-start justify-between gap-3">
           <div>

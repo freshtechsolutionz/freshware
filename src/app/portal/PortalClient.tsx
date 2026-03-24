@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
@@ -64,14 +65,17 @@ export default function PortalClient() {
 
   async function onForgotPassword() {
     const clean = email.trim().toLowerCase();
-    if (!clean) return;
+    if (!clean) {
+      setError("Enter your email above first, then click Forgot password / Set password.");
+      return;
+    }
 
     setError(null);
     setMessage(null);
     setLoading(true);
 
     const origin = window.location.origin;
-    const redirectTo = `${origin}/auth/reset?next=${encodeURIComponent(nextUrl)}`;
+    const redirectTo = `${origin}/portal/setup`;
 
     const { error } = await supabase.auth.resetPasswordForEmail(clean, { redirectTo });
 
@@ -147,14 +151,22 @@ export default function PortalClient() {
           <button
             type="button"
             onClick={onForgotPassword}
-            disabled={loading || !email.trim()}
+            disabled={loading}
             className="w-full h-11 rounded-xl border border-black/10 bg-white text-sm font-semibold disabled:opacity-60"
           >
             {loading ? "Sending..." : "Forgot password / Set password"}
           </button>
 
-          <div className="pt-2 text-xs text-gray-500">
-            Tip: deep link with ?next=/dashboard/opportunities
+          <Link
+            href="/request-access"
+            className="w-full h-11 rounded-xl border border-black/10 bg-white text-sm font-semibold flex items-center justify-center hover:bg-gray-50"
+          >
+            Request access
+          </Link>
+
+          <div className="pt-2 text-xs text-gray-500 text-center">
+            Need access? Request an invitation. Already invited? Use your email above and click
+            “Forgot password / Set password” to finish setup.
           </div>
         </form>
       </div>

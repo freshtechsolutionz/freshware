@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createServerClient } from "@supabase/ssr";
+import HomeClient from "./HomeClient";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,12 @@ export default async function Home() {
   );
 
   const { data: auth } = await supabase.auth.getUser();
-  if (auth.user) redirect("/dashboard");
 
-  redirect("/portal");
+  // ✅ If logged in → dashboard
+  if (auth.user) {
+    redirect("/dashboard");
+  }
+
+  // ✅ If NOT logged in → show homepage (NOT portal)
+  return <HomeClient />;
 }

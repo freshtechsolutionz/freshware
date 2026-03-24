@@ -118,7 +118,7 @@ export default function EditOpportunityForm({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/accounts")
+    fetch("/api/companies")
       .then((r) => r.json())
       .then((j) => setCompanies(j.companies || []))
       .catch(() => {})
@@ -258,7 +258,15 @@ export default function EditOpportunityForm({
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-sm font-medium">Company Profile</label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-sm font-medium">Company Profile</label>
+                  <Link
+                    href="/dashboard/companies?new=1"
+                    className="text-xs font-semibold text-blue-700 underline underline-offset-4"
+                  >
+                    + Create New Company
+                  </Link>
+                </div>
                 <select
                   value={form.company_id}
                   onChange={(e) => setField("company_id", e.target.value)}
@@ -384,7 +392,7 @@ export default function EditOpportunityForm({
               ) : (
                 <button
                   type="button"
-                  className="mt-2 text-xs underline text-zinc-700"
+                  className="mt-2 text-xs text-zinc-700 underline"
                   onClick={() => setField("probability", String(suggestedProb))}
                 >
                   Reset input to stage default

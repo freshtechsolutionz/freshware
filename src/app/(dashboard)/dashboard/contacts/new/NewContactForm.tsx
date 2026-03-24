@@ -37,7 +37,7 @@ export default function NewContactForm() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/accounts")
+    fetch("/api/companies")
       .then((r) => r.json())
       .then((j) => setCompanies(j.companies || []))
       .catch(() => {})
@@ -138,7 +138,15 @@ export default function NewContactForm() {
           </div>
 
           <div>
-            <label className="text-sm font-medium">Company Profile</label>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className="text-sm font-medium">Company Profile</label>
+              <Link
+                href="/dashboard/companies?new=1"
+                className="text-xs font-semibold text-blue-700 underline underline-offset-4"
+              >
+                + Create New Company
+              </Link>
+            </div>
             <select
               value={form.company_id}
               onChange={(e) => setField("company_id", e.target.value)}

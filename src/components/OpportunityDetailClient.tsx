@@ -8,6 +8,7 @@ import { SALES_STAGES, STAGE_PROBABILITY, SalesStage, formatServiceLine } from "
 type Opportunity = {
   id: string;
   account_id: string | null;
+  company_id: string | null;
   contact_id: string | null;
   owner_user_id: string | null;
   service_line: string | null;
@@ -22,6 +23,7 @@ type Opportunity = {
 
 type Account = { id: string; name: string | null } | null;
 type Contact = { id: string; name: string | null; email: string | null } | null;
+type Company = { id: string; name: string | null; website: string | null; industry: string | null } | null;
 
 function money(n: number) {
   return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -41,11 +43,13 @@ export default function OpportunityDetailClient({
   opportunity,
   account,
   contact,
+  company,
 }: {
   role: string;
   opportunity: Opportunity;
   account: Account;
   contact: Contact;
+  company: Company;
 }) {
   const [stage, setStage] = useState<string>(opportunity.stage || "new");
   const [probability, setProbability] = useState<number | null>(
@@ -55,10 +59,8 @@ export default function OpportunityDetailClient({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // rule you requested: use opp.probability if present, otherwise stage base
   const baseProb = useMemo(() => STAGE_PROBABILITY[safeStage(stage)], [stage]);
   const effectiveProb = useMemo(() => (probability == null ? baseProb : probability), [probability, baseProb]);
-
   const showConvert = useMemo(() => safeStage(stage) === "won", [stage]);
 
   async function save() {
@@ -109,9 +111,9 @@ export default function OpportunityDetailClient({
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
-            <div className="text-xl font-semibold truncate">{opportunity.name || "Untitled Opportunity"}</div>
+            <div className="truncate text-xl font-semibold">{opportunity.name || "Untitled Opportunity"}</div>
 
-            <div className="mt-1 text-sm text-zinc-600 space-y-1">
+            <div className="mt-1 space-y-1 text-sm text-zinc-600">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span>
                   Deal Size:{" "}
@@ -138,6 +140,31 @@ export default function OpportunityDetailClient({
                   </span>
                 </span>
               </div>
+
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span>
+                  Company Profile:{" "}
+                  {company ? (
+                    <Link
+                      href={`/dashboard/companies/${company.id}`}
+                      className="font-semibold text-blue-700 underline underline-offset-4"
+                    >
+                      {company.name || "Unnamed Company"}
+                    </Link>
+                  ) : (
+                    <span className="font-semibold text-red-600">Not linked</span>
+                  )}
+                </span>
+
+                {company?.industry ? (
+                  <>
+                    <span className="text-zinc-300">•</span>
+                    <span>
+                      Industry: <span className="font-semibold text-zinc-900">{company.industry}</span>
+                    </span>
+                  </>
+                ) : null}
+              </div>
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -156,7 +183,7 @@ export default function OpportunityDetailClient({
           <div className="flex flex-col gap-2 md:items-end">
             <Link
               href={`/dashboard/opportunities/${opportunity.id}/edit`}
-              className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-zinc-50 text-center"
+              className="rounded-xl border bg-white px-4 py-2 text-center text-sm font-semibold hover:bg-zinc-50"
             >
               Edit Opportunity
             </Link>
@@ -178,6 +205,12 @@ export default function OpportunityDetailClient({
           </div>
         </div>
 
+        {!company && showConvert ? (
+          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            Opportunity must be linked to a company profile before converting to a project.
+          </div>
+        ) : null}
+
         {err ? (
           <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {err}
@@ -186,7 +219,7 @@ export default function OpportunityDetailClient({
 
         <div className="mt-4 grid gap-3 md:grid-cols-3">
           <div>
-            <div className="text-xs text-zinc-500 mb-1">Stage</div>
+            <div className="mb-1 text-xs text-zinc-500">Stage</div>
             <select
               value={stage}
               onChange={(e) => setStage(e.target.value)}
@@ -204,7 +237,7 @@ export default function OpportunityDetailClient({
           </div>
 
           <div>
-            <div className="text-xs text-zinc-500 mb-1">Probability override (optional)</div>
+            <div className="mb-1 text-xs text-zinc-500">Probability override (optional)</div>
             <input
               type="number"
               min={0}
