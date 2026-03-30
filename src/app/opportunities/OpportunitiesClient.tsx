@@ -44,7 +44,6 @@ type Opportunity = {
   probability: number | null;
   close_date: string | null;
   created_at: string;
-
   last_touch_at?: string | null;
 };
 
@@ -90,6 +89,15 @@ function daysBetween(now: Date, past: Date): number {
 
 type OwnerScope = "all" | "me" | "unassigned";
 
+function stageStyle(stage: string | null | undefined) {
+  const s = String(stage || "").toLowerCase();
+  if (s === "won") return "border-black bg-black text-white";
+  if (s === "proposal") return "border-gray-900 bg-gray-900 text-white";
+  if (s === "qualified" || s === "negotiation") return "border-gray-300 bg-gray-100 text-gray-900";
+  if (s === "lost") return "border-gray-200 bg-white text-gray-500";
+  return "border-gray-200 bg-white text-gray-700";
+}
+
 export default function OpportunitiesClient({
   profile,
   users = [],
@@ -109,25 +117,19 @@ export default function OpportunitiesClient({
 }) {
   const router = useRouter();
 
-  // kept for compatibility (not used on this page yet)
   const _accounts = initialAccounts;
   const _contacts = initialContacts;
-
   const rows = initialRows;
 
   const [rowsError, setRowsError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  // Filters
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [openOnly, setOpenOnly] = useState(true);
   const [ownerScope, setOwnerScope] = useState<OwnerScope>("all");
 
-  // Stuck deals threshold
   const [staleDays, setStaleDays] = useState<number>(14);
-
-  // quick note per row (stuck panel)
   const [noteByOpp, setNoteByOpp] = useState<Record<string, string>>({});
 
   const role = profile?.role ?? "PENDING";
@@ -257,38 +259,59 @@ export default function OpportunitiesClient({
 
       if (!passesOpenOnly(o)) return false;
       if (!passesOwner(o)) return false;
-
       if (stageFilter !== "all" && st !== stageFilter.toLowerCase()) return false;
 
       if (q) {
         const name = (o.name ?? "").toLowerCase();
         const id = (o.id ?? "").toLowerCase();
-        if (!name.includes(q) && !id.includes(q)) return false;
+        const service = (o.service_line ?? "").toLowerCase();
+        if (!name.includes(q) && !id.includes(q) && !service.includes(q)) return false;
       }
 
       return true;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, search, stageFilter, openOnly, ownerScope, profile.id]);
 
   const kpis = useMemo(() => {
     let openDeals = 0;
     let openPipeline = 0;
     let openWeighted = 0;
+    let wonRevenue = 0;
 
     for (const o of filteredRows) {
       const st = (o.stage ?? "").toLowerCase();
-      if (st === "won" || st === "lost") continue;
-
       const amt = toNumber(o.amount);
       const prob = clampPct(toNumber(o.probability));
+
+      if (st === "won") wonRevenue += amt;
+      if (st === "won" || st === "lost") continue;
 
       openDeals += 1;
       openPipeline += amt;
       openWeighted += amt * (prob / 100);
     }
 
-    return { openDeals, openPipeline, openWeighted };
+    return { openDeals, openPipeline, openWeighted, wonRevenue };
+  }, [filteredRows]);
+
+  const stageSummary = useMemo(() => {
+    const base: Record<string, { count: number; value: number }> = {};
+    for (const stage of STAGES) {
+      base[stage] = { count: 0, value: 0 };
+    }
+
+    for (const o of filteredRows) {
+      const stage = (o.stage || "new").toLowerCase();
+      if (!base[stage]) base[stage] = { count: 0, value: 0 };
+      base[stage].count += 1;
+      base[stage].value += toNumber(o.amount);
+    }
+
+    return STAGES.map((stage) => ({
+      stage,
+      count: base[stage]?.count || 0,
+      value: base[stage]?.value || 0,
+    }));
   }, [filteredRows]);
 
   const stuckDeals = useMemo(() => {
@@ -314,47 +337,78 @@ export default function OpportunitiesClient({
   }, [filteredRows, staleDays]);
 
   return (
-    <>
-      {/* Header */}
-      <div className="p-3 border rounded-md">
-        <div>
-          <b>User:</b> {profile?.full_name ?? "(no name)"}
-        </div>
-        <div>
-          <b>Role:</b> {role}
-        </div>
-        <div>
-          <b>Account:</b> {profile?.account_id ?? "(none)"}
-        </div>
-      </div>
+    <div className="space-y-6">
+      <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="text-2xl font-semibold text-gray-900">Opportunities</div>
+            <div className="mt-1 text-sm text-gray-600">
+              Track pipeline, move deals, log activity, and surface stuck revenue.
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-500">
+              <span>User: {profile?.full_name ?? "(no name)"}</span>
+              <span>•</span>
+              <span>Role: {role}</span>
+              <span>•</span>
+              <span>Account: {profile?.account_id ?? "(none)"}</span>
+            </div>
+          </div>
 
-      {/* Nav */}
-      <div className="flex gap-2">
-        <button className="underline" onClick={() => router.push("/dashboard")}>
-          ← Dashboard
-        </button>
-        <button className="underline" onClick={() => router.push("/sales")}>
-          Sales Pipeline
-        </button>
-        <button className="underline text-red-600" onClick={logout}>
-          Log out
-        </button>
-      </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="fw-btn text-sm" onClick={() => router.push("/dashboard")}>
+              Dashboard
+            </button>
+            <button className="fw-btn text-sm" onClick={() => router.push("/dashboard/lead-generation")}>
+              Lead Generator
+            </button>
+            <button className="fw-btn text-sm" onClick={() => router.push("/sales")}>
+              Sales Pipeline
+            </button>
+            <button className="fw-btn text-sm text-red-600" onClick={logout}>
+              Log out
+            </button>
+          </div>
+        </div>
+      </section>
 
-      {/* Errors */}
       {(lookupError || serverRowsError || rowsError) && (
-        <div className="mt-2 p-3 border rounded-md">
-          <b className="text-red-600">Error:</b> {rowsError ?? serverRowsError ?? lookupError}
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {rowsError ?? serverRowsError ?? lookupError}
         </div>
       )}
 
-      {/* Stuck Deals */}
-      <div className="mt-4 border rounded-md p-3 space-y-3">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Open Deals" value={String(kpis.openDeals)} />
+        <MetricCard label="Open Pipeline" value={money(kpis.openPipeline)} />
+        <MetricCard label="Weighted Pipeline" value={money(kpis.openWeighted)} />
+        <MetricCard label="Won Revenue" value={money(kpis.wonRevenue)} />
+      </section>
+
+      <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
+        <div className="text-lg font-semibold text-gray-900">Stage Snapshot</div>
+        <div className="mt-1 text-sm text-gray-500">Quick visual by stage and value.</div>
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {stageSummary.map((item) => (
+            <div key={item.stage} className="rounded-2xl border border-black/10 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${stageStyle(item.stage)}`}>
+                  {item.stage}
+                </span>
+                <span className="text-sm text-gray-500">{item.count} deals</span>
+              </div>
+              <div className="mt-3 text-2xl font-semibold text-gray-900">{money(item.value)}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-lg font-semibold">Stuck Deals</div>
-            <div className="text-sm opacity-70">
-              Open deals with no logged activity for <b>{staleDays}</b>+ days (from <code>opportunity_activities</code>)
+            <div className="text-lg font-semibold text-gray-900">Stuck Deals</div>
+            <div className="text-sm text-gray-500">
+              Open deals with no logged activity for <b>{staleDays}</b>+ days.
             </div>
           </div>
 
@@ -363,7 +417,7 @@ export default function OpportunitiesClient({
             <select
               value={staleDays}
               onChange={(e) => setStaleDays(Number(e.target.value))}
-              className="border rounded-md p-2"
+              className="rounded-xl border border-black/10 p-2"
             >
               <option value={7}>7 days</option>
               <option value={14}>14 days</option>
@@ -376,7 +430,7 @@ export default function OpportunitiesClient({
         </div>
 
         {stuckDeals.length === 0 ? (
-          <div className="text-sm opacity-70">No stuck deals 🎉</div>
+          <div className="text-sm text-gray-500">No stuck deals.</div>
         ) : (
           <div className="overflow-auto">
             <table className="w-full border-collapse text-sm">
@@ -406,22 +460,19 @@ export default function OpportunitiesClient({
                   return (
                     <tr key={o.id}>
                       <td className="p-2 border-b">
-                        <Link href={`/opportunities/${o.id}`} className="underline underline-offset-2 hover:opacity-80">
+                        <Link href={`/dashboard/opportunities/${o.id}`} className="underline underline-offset-2 hover:opacity-80">
                           {o.name ?? "(no name)"}
                         </Link>
-                        <div className="text-xs opacity-70">{o.id}</div>
+                        <div className="text-xs text-gray-500">{o.id}</div>
                       </td>
 
                       <td className="p-2 border-b">{ownerName}</td>
                       <td className="p-2 border-b">{o.stage ?? "(none)"}</td>
                       <td className="p-2 border-b">{money(toNumber(o.amount))}</td>
-
                       <td className="p-2 border-b">
                         <span className="font-semibold">{daysStale}</span> days
                       </td>
-
                       <td className="p-2 border-b">{lastStr}</td>
-
                       <td className="p-2 border-b">
                         {canUpdate ? (
                           <div className="flex flex-col gap-2">
@@ -442,7 +493,7 @@ export default function OpportunitiesClient({
                                 value={noteByOpp[o.id] ?? ""}
                                 onChange={(e) => setNoteByOpp((prev) => ({ ...prev, [o.id]: e.target.value }))}
                                 placeholder="Quick note…"
-                                className="border rounded-md p-1 flex-1"
+                                className="flex-1 rounded-xl border border-black/10 p-2"
                               />
                               <button className="underline" disabled={savingId === o.id} onClick={() => logActivity(o.id, "note", noteByOpp[o.id] ?? "")}>
                                 Note
@@ -460,132 +511,137 @@ export default function OpportunitiesClient({
             </table>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Filters */}
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name or ID" className="border rounded-md p-2" />
+      <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
+        <div className="grid gap-3 md:grid-cols-4">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, ID, or service"
+            className="rounded-xl border border-black/10 p-3"
+          />
 
-        <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="border rounded-md p-2">
-          <option value="all">All stages</option>
-          {STAGES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+          <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="rounded-xl border border-black/10 p-3">
+            <option value="all">All stages</option>
+            {STAGES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
 
-        <select value={ownerScope} onChange={(e) => setOwnerScope(e.target.value as OwnerScope)} className="border rounded-md p-2">
-          <option value="all">All owners</option>
-          <option value="me">Mine</option>
-          <option value="unassigned">Unassigned</option>
-        </select>
+          <select value={ownerScope} onChange={(e) => setOwnerScope(e.target.value as OwnerScope)} className="rounded-xl border border-black/10 p-3">
+            <option value="all">All owners</option>
+            <option value="me">Mine</option>
+            <option value="unassigned">Unassigned</option>
+          </select>
 
-        <button onClick={() => setOpenOnly((v) => !v)} className="border rounded-md">
-          Open Only: {openOnly ? "ON" : "OFF"}
-        </button>
-      </div>
-
-      {/* KPIs */}
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <div className="p-3 border rounded-md">
-          <div className="text-xs opacity-70">Open Deals</div>
-          <div className="text-lg font-semibold">{kpis.openDeals}</div>
+          <button onClick={() => setOpenOnly((v) => !v)} className="rounded-xl border border-black/10 p-3">
+            Open Only: {openOnly ? "ON" : "OFF"}
+          </button>
         </div>
-        <div className="p-3 border rounded-md">
-          <div className="text-xs opacity-70">Open Pipeline</div>
-          <div className="text-lg font-semibold">{money(kpis.openPipeline)}</div>
-        </div>
-        <div className="p-3 border rounded-md">
-          <div className="text-xs opacity-70">Weighted</div>
-          <div className="text-lg font-semibold">{money(kpis.openWeighted)}</div>
-        </div>
-      </div>
+      </section>
 
-      {/* LIST */}
-      <div className="mt-5">
-        <h3 className="font-semibold mb-2">Opportunities</h3>
+      <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
+        <div className="mb-4 text-lg font-semibold text-gray-900">Opportunities</div>
 
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr>
-              <th className="text-left border-b p-2">Name</th>
-              <th className="text-left border-b p-2">Owner</th>
-              <th className="text-left border-b p-2">Stage</th>
-              <th className="text-left border-b p-2">Amount</th>
-              <th className="text-left border-b p-2">Prob%</th>
-              <th className="text-left border-b p-2">Close</th>
-              <th className="text-left border-b p-2">Actions</th>
-            </tr>
-          </thead>
+        <div className="overflow-auto">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr>
+                <th className="text-left border-b p-2">Name</th>
+                <th className="text-left border-b p-2">Owner</th>
+                <th className="text-left border-b p-2">Stage</th>
+                <th className="text-left border-b p-2">Amount</th>
+                <th className="text-left border-b p-2">Prob%</th>
+                <th className="text-left border-b p-2">Close</th>
+                <th className="text-left border-b p-2">Actions</th>
+              </tr>
+            </thead>
 
-          <tbody>
-            {filteredRows.map((o) => {
-              const ownerName = o.owner_user_id
-                ? o.owner_user_id === profile.id
-                  ? "Me"
-                  : usersById[o.owner_user_id] ?? o.owner_user_id
-                : "Unassigned";
+            <tbody>
+              {filteredRows.map((o) => {
+                const ownerName = o.owner_user_id
+                  ? o.owner_user_id === profile.id
+                    ? "Me"
+                    : usersById[o.owner_user_id] ?? o.owner_user_id
+                  : "Unassigned";
 
-              const stageLower = (o.stage || "").toLowerCase();
-              const isClosed = stageLower === "won" || stageLower === "lost";
+                const stageLower = (o.stage || "").toLowerCase();
+                const isClosed = stageLower === "won" || stageLower === "lost";
 
-              return (
-                <tr key={o.id}>
-                  <td className="p-2 border-b">
-                    <div className="font-semibold">
-                      <Link href={`/opportunities/${o.id}`} className="underline underline-offset-2 hover:opacity-80">
-                        {o.name ?? "(no name)"}
-                      </Link>
-                    </div>
-                    <div className="text-xs opacity-70">{o.id}</div>
-                  </td>
+                return (
+                  <tr key={o.id}>
+                    <td className="p-2 border-b">
+                      <div className="font-semibold">
+                        <Link href={`/dashboard/opportunities/${o.id}`} className="underline underline-offset-2 hover:opacity-80">
+                          {o.name ?? "(no name)"}
+                        </Link>
+                      </div>
+                      <div className="text-xs text-gray-500">{o.id}</div>
+                    </td>
 
-                  <td className="p-2 border-b">{ownerName}</td>
+                    <td className="p-2 border-b">{ownerName}</td>
 
-                  <td className="p-2 border-b">
-                    {canUpdate ? (
-                      <select value={o.stage ?? "new"} onChange={(e) => updateOpportunity(o.id, { stage: e.target.value })} disabled={savingId === o.id} className="border rounded-md p-1">
-                        {STAGES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      o.stage ?? "(none)"
-                    )}
-                  </td>
+                    <td className="p-2 border-b">
+                      {canUpdate ? (
+                        <select
+                          value={o.stage ?? "new"}
+                          onChange={(e) => updateOpportunity(o.id, { stage: e.target.value })}
+                          disabled={savingId === o.id}
+                          className="rounded-xl border border-black/10 p-2"
+                        >
+                          {STAGES.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        o.stage ?? "(none)"
+                      )}
+                    </td>
 
-                  <td className="p-2 border-b">{money(toNumber(o.amount))}</td>
-                  <td className="p-2 border-b">{pct(clampPct(toNumber(o.probability)))}</td>
-                  <td className="p-2 border-b">{o.close_date ?? "(none)"}</td>
+                    <td className="p-2 border-b">{money(toNumber(o.amount))}</td>
+                    <td className="p-2 border-b">{pct(clampPct(toNumber(o.probability)))}</td>
+                    <td className="p-2 border-b">{o.close_date ?? "(none)"}</td>
 
-                  <td className="p-2 border-b">
-                    {savingId === o.id ? (
-                      "Working…"
-                    ) : !isClosed && canUpdate ? (
-                      <button className="underline" type="button" onClick={() => convertToProject(o.id)}>
-                        Convert → Project
-                      </button>
-                    ) : (
-                      "—"
-                    )}
+                    <td className="p-2 border-b">
+                      {savingId === o.id ? (
+                        "Working…"
+                      ) : !isClosed && canUpdate ? (
+                        <button className="underline" type="button" onClick={() => convertToProject(o.id)}>
+                          Convert → Project
+                        </button>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {filteredRows.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-2 text-gray-500">
+                    No opportunities match your filters.
                   </td>
                 </tr>
-              );
-            })}
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
 
-            {filteredRows.length === 0 && (
-              <tr>
-                <td colSpan={7} className="p-2 opacity-70">
-                  No opportunities match your filters.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </>
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</div>
+      <div className="mt-2 text-3xl font-semibold text-gray-900">{value}</div>
+    </div>
   );
 }

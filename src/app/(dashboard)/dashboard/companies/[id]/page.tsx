@@ -120,7 +120,7 @@ export default async function Company360Page({
   if (!companyRes.data) notFound();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-10">
       <PageHeader
         title="Company 360"
         subtitle="Sales, delivery, revenue, intelligence, and linking in one place."

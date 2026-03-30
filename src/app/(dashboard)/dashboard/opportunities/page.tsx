@@ -1,110 +1,162 @@
-import { notFound, redirect } from "next/navigation";
-import PageHeader from "@/components/dashboard/PageHeader";
-import { supabaseServer } from "@/lib/supabase/server";
-import OpportunityDetailClient from "@/components/OpportunityDetailClient";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { createServerClient } from "@supabase/ssr";
+import OpportunitiesClient from "@/app/opportunities/OpportunitiesClient";
 
 export const runtime = "nodejs";
+
+type Profile = {
+  id: string;
+  full_name: string | null;
+  role: string | null;
+  account_id: string | null;
+};
+
+type UserLite = {
+  id: string;
+  full_name: string | null;
+};
+
+type AccountLite = {
+  id: string;
+  name: string | null;
+  industry: string | null;
+};
+
+type ContactLite = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  account_id: string;
+};
 
 type Opportunity = {
   id: string;
   account_id: string | null;
-  company_id: string | null;
   contact_id: string | null;
   owner_user_id: string | null;
+  name: string | null;
   service_line: string | null;
   stage: string | null;
   amount: number | null;
   probability: number | null;
   close_date: string | null;
-  last_activity_at: string | null;
-  created_at: string | null;
-  name: string | null;
-  deleted_at?: string | null;
+  created_at: string;
+  company_id?: string | null;
+  last_touch_at?: string | null;
 };
 
-type Account = { id: string; name: string | null };
-type Contact = { id: string; name: string | null; email: string | null };
-type Company = { id: string; name: string | null; website: string | null; industry: string | null };
+export default async function OpportunitiesPage() {
+  const cookieStore = await cookies();
 
-export default async function OpportunityPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  if (!id) notFound();
-
-  const supabase = await supabaseServer();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { getAll: () => cookieStore.getAll() } }
+  );
 
   const { data: auth } = await supabase.auth.getUser();
-  const user = auth.user;
-  if (!user) redirect(`/portal?next=/dashboard/opportunities/${id}`);
+  if (!auth.user) redirect("/portal?next=/dashboard/opportunities");
 
-  const { data: profile } = await supabase
+  const { data: profileRow, error: profileError } = await supabase
     .from("profiles")
-    .select("role")
-    .eq("id", user.id)
+    .select("id, full_name, role, account_id")
+    .eq("id", auth.user.id)
     .maybeSingle();
 
-  const role = (profile?.role || "STAFF") as string;
-
-  const { data: opp, error: oppErr } = await supabase
-    .from("opportunities")
-    .select(
-      "id,account_id,company_id,contact_id,owner_user_id,service_line,stage,amount,probability,close_date,last_activity_at,created_at,name,deleted_at"
-    )
-    .eq("id", id)
-    .maybeSingle();
-
-  if (oppErr) {
+  if (profileError || !profileRow?.account_id) {
     return (
-      <>
-        <PageHeader title="Opportunity" subtitle="Details and next steps." />
-        <div className="rounded-2xl border bg-background p-4 text-sm">
-          Error loading opportunity: {oppErr.message}
+      <div className="fw-card-strong p-7">
+        <div className="text-lg font-semibold">Opportunities</div>
+        <div className="mt-2 text-sm text-gray-600">
+          Missing profile or account assignment.
         </div>
-      </>
+      </div>
     );
   }
 
-  if (!opp || (opp as any).deleted_at) notFound();
+  const profile = profileRow as Profile;
+  const accountId = profile.account_id;
 
-  const opportunity = opp as Opportunity;
+  const [
+    usersRes,
+    accountsRes,
+    contactsRes,
+    oppsRes,
+    activitiesRes,
+  ] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("id, full_name")
+      .eq("account_id", accountId)
+      .order("full_name", { ascending: true }),
 
-  const { data: account } = opportunity.account_id
-    ? await supabase
-        .from("accounts")
-        .select("id,name")
-        .eq("id", opportunity.account_id)
-        .maybeSingle()
-    : { data: null as Account | null };
+    supabase
+      .from("accounts")
+      .select("id, name, industry")
+      .eq("id", accountId)
+      .limit(50),
 
-  const { data: contact } = opportunity.contact_id
-    ? await supabase
-        .from("contacts")
-        .select("id,name,email")
-        .eq("id", opportunity.contact_id)
-        .maybeSingle()
-    : { data: null as Contact | null };
+    supabase
+      .from("contacts")
+      .select("id, name, email, account_id")
+      .eq("account_id", accountId)
+      .limit(500),
 
-  const { data: company } = opportunity.company_id
-    ? await supabase
-        .from("companies")
-        .select("id,name,website,industry")
-        .eq("id", opportunity.company_id)
-        .maybeSingle()
-    : { data: null as Company | null };
+    supabase
+      .from("opportunities")
+      .select("id, account_id, contact_id, owner_user_id, name, service_line, stage, amount, probability, close_date, created_at")
+      .eq("account_id", accountId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false }),
+
+    supabase
+      .from("opportunity_activities")
+      .select("opportunity_id, occurred_at")
+      .eq("account_id", accountId)
+      .order("occurred_at", { ascending: false }),
+  ]);
+
+  const lookupError =
+    usersRes.error?.message ||
+    accountsRes.error?.message ||
+    contactsRes.error?.message ||
+    null;
+
+  const rowsError = oppsRes.error?.message || null;
+
+  const oppRows = (oppsRes.data || []) as Opportunity[];
+  const activityRows = (activitiesRes.data || []) as Array<{
+    opportunity_id: string | null;
+    occurred_at: string | null;
+  }>;
+
+  const latestActivityByOpp = new Map<string, string>();
+  for (const row of activityRows) {
+    const oppId = row.opportunity_id || "";
+    const occurredAt = row.occurred_at || "";
+    if (!oppId || !occurredAt) continue;
+    if (!latestActivityByOpp.has(oppId)) {
+      latestActivityByOpp.set(oppId, occurredAt);
+    }
+  }
+
+  const rowsWithTouch = oppRows.map((row) => ({
+    ...row,
+    last_touch_at: latestActivityByOpp.get(row.id) || null,
+  }));
 
   return (
-    <>
-      <PageHeader title="Opportunity" subtitle="Details, probability, momentum, and company context." />
-      <OpportunityDetailClient
-        role={role}
-        opportunity={opportunity as any}
-        account={account || null}
-        contact={contact || null}
-        company={company || null}
+    <div className="space-y-6 pb-10">
+      <OpportunitiesClient
+        profile={profile}
+        users={(usersRes.data || []) as UserLite[]}
+        initialAccounts={(accountsRes.data || []) as AccountLite[]}
+        initialContacts={(contactsRes.data || []) as ContactLite[]}
+        initialRows={rowsWithTouch}
+        lookupError={lookupError}
+        rowsError={rowsError}
       />
-    </>
+    </div>
   );
 }

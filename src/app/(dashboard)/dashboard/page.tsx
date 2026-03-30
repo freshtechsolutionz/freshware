@@ -15,6 +15,26 @@ type Profile = {
   account_id: string | null;
 };
 
+type LeadProspect = {
+  id: string;
+  company_name: string | null;
+  website: string | null;
+  total_score: number | null;
+  source_label: string | null;
+  source_type: string | null;
+  outreach_status: string | null;
+  next_follow_up_at: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  discovered_emails: any;
+  discovered_phones: any;
+  outreach_subject: string | null;
+  outreach_draft: string | null;
+  created_at: string | null;
+  converted_company_id: string | null;
+  converted_opportunity_id: string | null;
+};
+
 function fmt(n: number) {
   return new Intl.NumberFormat().format(n);
 }
@@ -63,6 +83,24 @@ function daysAgo(n: number) {
   const d = new Date();
   d.setDate(d.getDate() - n);
   return d;
+}
+
+function toArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((v) => String(v)).filter(Boolean) : [];
+}
+
+function hasLeadContact(lead: LeadProspect) {
+  return Boolean(lead.contact_email) ||
+    Boolean(lead.contact_phone) ||
+    toArray(lead.discovered_emails).length > 0 ||
+    toArray(lead.discovered_phones).length > 0;
+}
+
+function isFollowUpDue(value: string | null | undefined) {
+  if (!value) return false;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getTime() <= Date.now();
 }
 
 async function getVisitors(baseUrl: string) {
@@ -142,6 +180,7 @@ export default async function DashboardHome() {
   const visitors = await getVisitors(baseUrl);
 
   const now = new Date();
+  const monthStart = startOfMonth(now);
   const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const yearStart = startOfYear(now);
   const thirtyDaysAgoIso = daysAgo(30).toISOString();
@@ -158,6 +197,7 @@ export default async function DashboardHome() {
     revenueRes,
     contactsRes,
     companiesRes,
+    leadsRes,
   ] = await Promise.all([
     supabase.from("profiles").select("id", { count: "exact", head: true }).eq("account_id", accountId),
 
@@ -169,7 +209,8 @@ export default async function DashboardHome() {
     supabase
       .from("opportunities")
       .select("id, amount, probability, stage, close_date, created_at")
-      .eq("account_id", accountId),
+      .eq("account_id", accountId)
+      .is("deleted_at", null),
 
     supabase
       .from("projects")
@@ -194,6 +235,13 @@ export default async function DashboardHome() {
       .from("companies")
       .select("id, created_at")
       .eq("account_id", accountId),
+
+    supabase
+      .from("lead_prospects")
+      .select("id, company_name, website, total_score, source_label, source_type, outreach_status, next_follow_up_at, contact_email, contact_phone, discovered_emails, discovered_phones, outreach_subject, outreach_draft, created_at, converted_company_id, converted_opportunity_id")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false })
+      .limit(300),
   ]);
 
   const totalUsers = usersRes.count ?? 0;
@@ -244,6 +292,8 @@ export default async function DashboardHome() {
     id: string;
     created_at: string | null;
   }>;
+
+  const leadRows = (leadsRes.data || []) as LeadProspect[];
 
   const totalTasks = tasksRes.count ?? taskRows.length ?? 0;
   const overdueTasks = taskRows.filter((t) => {
@@ -389,6 +439,35 @@ export default async function DashboardHome() {
     opportunity_id: string | null;
   }>;
 
+  const readyToEmail = leadRows
+    .filter((lead) => {
+      const hasContact = hasLeadContact(lead);
+      const notContacted = String(lead.outreach_status || "NOT_CONTACTED") === "NOT_CONTACTED";
+      const score = Number(lead.total_score || 0) >= 70;
+      return hasContact && notContacted && score;
+    })
+    .sort((a, b) => Number(b.total_score || 0) - Number(a.total_score || 0))
+    .slice(0, 5);
+
+  const overdueFollowUps = leadRows
+    .filter((lead) => isFollowUpDue(lead.next_follow_up_at))
+    .sort((a, b) => Number(b.total_score || 0) - Number(a.total_score || 0))
+    .slice(0, 5);
+
+  const hotUncontacted = leadRows
+    .filter((lead) => String(lead.outreach_status || "NOT_CONTACTED") === "NOT_CONTACTED")
+    .sort((a, b) => Number(b.total_score || 0) - Number(a.total_score || 0))
+    .slice(0, 5);
+
+  const outreachReady = leadRows
+    .filter((lead) => {
+      const hasContact = hasLeadContact(lead);
+      const hasDraft = Boolean(lead.outreach_subject) || Boolean(lead.outreach_draft);
+      return hasContact && hasDraft;
+    })
+    .sort((a, b) => Number(b.total_score || 0) - Number(a.total_score || 0))
+    .slice(0, 5);
+
   const ceoInsights: string[] = [];
 
   if (visitors30d > 0 && newContacts30d === 0) {
@@ -415,8 +494,12 @@ export default async function DashboardHome() {
     ceoInsights.push(`${fmt(overdueTasks)} overdue task(s) need attention. Execution drag will eventually affect client trust and revenue.`);
   }
 
-  if (revenueThisMonth === 0 && openPipeline > 0) {
-    ceoInsights.push("Pipeline exists, but recognized revenue this month is still low. Prioritize closing and cash collection.");
+  if (readyToEmail.length > 0) {
+    ceoInsights.push(`${fmt(readyToEmail.length)} lead(s) are contact-ready right now with contact info already found. Outreach can happen today.`);
+  }
+
+  if (overdueFollowUps.length > 0) {
+    ceoInsights.push(`${fmt(overdueFollowUps.length)} follow-up(s) are already due. Revenue is likely sitting in the follow-up queue.`);
   }
 
   if (!ceoInsights.length) {
@@ -504,13 +587,12 @@ export default async function DashboardHome() {
           </div>
 
           <div className="mt-5 text-xs text-gray-500">
-            Next: live revenue input flow, company intelligence actions, and CEO notifications.
+            Freshware is now tracking lead sourcing, outreach readiness, and follow-up priority.
           </div>
         </div>
       </section>
 
       <ToLeaveList />
-
       <CeoOverview />
 
       <section className="fw-card-strong p-7">
@@ -592,12 +674,12 @@ export default async function DashboardHome() {
             />
           </Link>
 
-          <Link href="/dashboard/contacts" className="block">
+          <Link href="/dashboard/lead-generation" className="block">
             <MetricCard
-              title="Growth Inputs"
-              value={fmt(newContacts7d)}
-              sub={`Contacts 7d · Companies 30d: ${fmt(newCompanies30d)}`}
-              note="New lead flow entering the ecosystem."
+              title="Lead Flow"
+              value={fmt(leadRows.length)}
+              sub={`Ready to email: ${fmt(readyToEmail.length)}`}
+              note="Lead sourcing, contact discovery, and outreach readiness."
             />
           </Link>
         </div>
@@ -683,6 +765,66 @@ export default async function DashboardHome() {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section className="fw-card-strong p-7">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-lg font-semibold text-gray-900">Outbound Command Center</div>
+            <div className="mt-1 text-sm text-gray-600">
+              The fastest route from lead intelligence to actual outreach activity.
+            </div>
+          </div>
+          <Link href="/dashboard/lead-generation" className="fw-btn text-sm">
+            Open Lead Generator
+          </Link>
+        </div>
+
+        <div className="mt-6 grid gap-4 xl:grid-cols-2">
+          <CommandList
+            title="Ready to Email Today"
+            subtitle="Has contact info, not yet contacted, and strong score."
+            items={readyToEmail.map((lead) => ({
+              id: lead.id,
+              title: lead.company_name || "Unnamed Lead",
+              meta: `${lead.source_label || lead.source_type || "Unknown source"} • Score ${lead.total_score ?? "N/A"}`,
+              href: "/dashboard/lead-generation",
+            }))}
+          />
+
+          <CommandList
+            title="Overdue Follow-Ups"
+            subtitle="These leads already need another touch."
+            items={overdueFollowUps.map((lead) => ({
+              id: lead.id,
+              title: lead.company_name || "Unnamed Lead",
+              meta: `Due ${fmtDue(lead.next_follow_up_at)} • Score ${lead.total_score ?? "N/A"}`,
+              href: "/dashboard/lead-generation",
+            }))}
+          />
+
+          <CommandList
+            title="Hottest Uncontacted Leads"
+            subtitle="High-scoring leads still untouched."
+            items={hotUncontacted.map((lead) => ({
+              id: lead.id,
+              title: lead.company_name || "Unnamed Lead",
+              meta: `${lead.source_label || lead.source_type || "Unknown source"} • Score ${lead.total_score ?? "N/A"}`,
+              href: "/dashboard/lead-generation",
+            }))}
+          />
+
+          <CommandList
+            title="Outreach-Ready Drafts"
+            subtitle="Lead already has contact info and a generated outreach message."
+            items={outreachReady.map((lead) => ({
+              id: lead.id,
+              title: lead.company_name || "Unnamed Lead",
+              meta: `${lead.outreach_subject || "Draft ready"} • Score ${lead.total_score ?? "N/A"}`,
+              href: "/dashboard/lead-generation",
+            }))}
+          />
         </div>
       </section>
 
@@ -864,6 +1006,32 @@ function CommandCard(props: { title: string; desc: string; href: string }) {
         <span className="fw-chip">Open</span>
       </div>
     </Link>
+  );
+}
+
+function CommandList(props: {
+  title: string;
+  subtitle: string;
+  items: Array<{ id: string; title: string; meta: string; href: string }>;
+}) {
+  return (
+    <div className="fw-card p-6">
+      <div className="text-sm font-semibold text-gray-900">{props.title}</div>
+      <div className="mt-1 text-sm text-gray-600">{props.subtitle}</div>
+
+      <div className="mt-4 space-y-3">
+        {props.items.length ? (
+          props.items.map((item) => (
+            <Link key={item.id} href={item.href} className="block rounded-2xl border border-black/10 p-4 hover:bg-gray-50">
+              <div className="text-sm font-semibold text-gray-900">{item.title}</div>
+              <div className="mt-1 text-xs text-gray-500">{item.meta}</div>
+            </Link>
+          ))
+        ) : (
+          <div className="text-sm text-gray-500">Nothing here right now.</div>
+        )}
+      </div>
+    </div>
   );
 }
 

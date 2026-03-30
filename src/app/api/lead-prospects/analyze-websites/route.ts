@@ -44,29 +44,18 @@ function parseJsonFromResponse(data: any): string {
   return parts.join("\n").trim();
 }
 
-async function fetchWebsiteText(website: string) {
-  try {
-    const res = await fetch(website, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "User-Agent": "FreshwareLeadWebsiteAnalyzer/1.0",
-        Accept: "text/html,application/xhtml+xml",
-      },
-      cache: "no-store",
-    });
+function normalizeWebsite(raw: string | null | undefined) {
+  const value = safeText(raw);
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.includes(".")) return `https://${value}`;
+  return null;
+}
 
-    if (!res.ok) {
-      return { ok: false, status: res.status, html: "", text: "" };
-    }
-
-    const html = await res.text();
-    const text = stripHtml(html).slice(0, 12000);
-
-    return { ok: true, status: res.status, html, text };
-  } catch {
-    return { ok: false, status: 0, html: "", text: "" };
-  }
+function normalizeEmail(raw: string | null | undefined) {
+  const value = safeText(raw);
+  if (!value || !value.includes("@")) return null;
+  return value.toLowerCase();
 }
 
 function detectSignals(html: string, text: string, website: string) {
@@ -118,6 +107,84 @@ function detectSignals(html: string, text: string, website: string) {
   };
 }
 
+function uniq(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function extractEmails(html: string, text: string) {
+  const matches = [
+    ...(html.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []),
+    ...(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []),
+  ];
+
+  return uniq(
+    matches
+      .map((v) => normalizeEmail(v))
+      .filter((v): v is string => Boolean(v))
+      .filter((email) => !email.includes("example.com"))
+  ).slice(0, 10);
+}
+
+function extractPhones(html: string, text: string) {
+  const regex = /\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g;
+  const matches = [...(html.match(regex) || []), ...(text.match(regex) || [])];
+  return uniq(matches.map((v) => v.trim())).slice(0, 10);
+}
+
+function extractContactPageUrl(html: string, baseWebsite: string) {
+  const hrefRegex = /href=["']([^"']+)["']/gi;
+  const lower = html.toLowerCase();
+  const candidates: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = hrefRegex.exec(html))) {
+    const href = match[1] || "";
+    const hrefLower = href.toLowerCase();
+    if (
+      hrefLower.includes("contact") ||
+      hrefLower.includes("about") ||
+      hrefLower.includes("team") ||
+      hrefLower.includes("staff")
+    ) {
+      candidates.push(href);
+    }
+  }
+
+  const candidate = candidates[0];
+  if (!candidate) return null;
+
+  try {
+    return new URL(candidate, baseWebsite).toString();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWebsite(website: string) {
+  try {
+    const res = await fetch(website, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        "User-Agent": "FreshwareLeadWebsiteAnalyzer/1.0",
+        Accept: "text/html,application/xhtml+xml",
+      },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      return { ok: false, status: res.status, html: "", text: "" };
+    }
+
+    const html = await res.text();
+    const text = stripHtml(html).slice(0, 12000);
+
+    return { ok: true, status: res.status, html, text };
+  } catch {
+    return { ok: false, status: 0, html: "", text: "" };
+  }
+}
+
 async function analyzeWithOpenAI(input: {
   companyName: string;
   website: string;
@@ -150,7 +217,8 @@ Return STRICT JSON only in this shape:
     "digital_maturity": "low | medium | high | unknown",
     "signals": ["string"],
     "risks": ["string"],
-    "opportunities": ["string"]
+    "opportunities": ["string"],
+    "insights": ["string"]
   }
 }
 
@@ -172,7 +240,9 @@ ${JSON.stringify(input, null, 2)}
 
   if (!response.ok) return null;
 
-  const data = await response.json();
+  const data = await response.json().catch(() => null);
+  if (!data) return null;
+
   const text = parseJsonFromResponse(data);
   if (!text) return null;
 
@@ -194,28 +264,33 @@ function fallbackAnalysis(input: {
   let need = "Needs discovery";
   const opportunities: string[] = [];
   const risks: string[] = [];
+  const insights: string[] = [];
 
   if (s.likelyOutdated) {
     recommended = "website";
     need = "Website modernization and stronger conversion flow";
     opportunities.push("Improve website conversion");
     opportunities.push("Modernize mobile and CTA experience");
+    insights.push("The website appears to have weak modern conversion signals.");
   }
 
   if (s.hasBooking && !s.hasPortal) {
     recommended = "software";
     need = "Booking workflow optimization and internal process automation";
     opportunities.push("Automate intake and scheduling workflows");
+    insights.push("There may be an operational workflow opportunity around scheduling.");
   }
 
   if (s.hasPortal) {
     recommended = "support";
     need = "Platform support, optimization, or expansion";
     opportunities.push("Improve existing platform support and visibility");
+    insights.push("The business may already have a customer-facing system that could be optimized.");
   }
 
   if (s.hasAppLanguage) {
     opportunities.push("Potential app optimization or feature expansion");
+    insights.push("There are signs of app-related digital maturity.");
   }
 
   if (!s.hasContactForm) {
@@ -249,23 +324,23 @@ function fallbackAnalysis(input: {
       ],
       risks,
       opportunities,
+      insights,
     },
   };
 }
 
 export async function POST(req: Request) {
-  const { supabase, profile, user } = await requireViewer();
+  const { supabase, user, profile } = await requireViewer();
 
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!profile || !profile.account_id) return NextResponse.json({ error: "Missing account assignment" }, { status: 400 });
+  if (!profile?.account_id) return NextResponse.json({ error: "Missing account assignment" }, { status: 400 });
   if (!isStaff(profile.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   try {
     const body = await req.json().catch(() => ({}));
-    const leadIds = Array.isArray(body?.leadIds) ? body.leadIds.map((v: any) => String(v)) : [];
-    const limit = Math.min(Number(body?.limit || 25), 100);
+    const limit = Math.max(1, Math.min(100, Number(body?.limit || 50)));
 
-    let query = supabase
+    const { data: leads, error } = await supabase
       .from("lead_prospects")
       .select("*")
       .eq("account_id", profile.account_id)
@@ -273,25 +348,22 @@ export async function POST(req: Request) {
       .order("created_at", { ascending: false })
       .limit(limit);
 
-    if (leadIds.length) {
-      query = query.in("id", leadIds);
-    }
-
-    const { data: leads, error } = await query;
-
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const updates: any[] = [];
-    const results: any[] = [];
+    const updates: Array<Record<string, any>> = [];
+    const results: Array<Record<string, any>> = [];
 
     for (const lead of leads || []) {
-      const website = safeText(lead.website);
+      const website = normalizeWebsite(lead.website);
       if (!website) continue;
 
-      const fetched = await fetchWebsiteText(website);
+      const fetched = await fetchWebsite(website);
       const signals = detectSignals(fetched.html, fetched.text, website);
+      const discoveredEmails = extractEmails(fetched.html, fetched.text);
+      const discoveredPhones = extractPhones(fetched.html, fetched.text);
+      const contactPageUrl = extractContactPageUrl(fetched.html, website);
 
       const ai =
         (await analyzeWithOpenAI({
@@ -307,6 +379,13 @@ export async function POST(req: Request) {
           signals,
         });
 
+      const mergedAccessScore = Number.isFinite(Number(ai.access_score))
+        ? Number(ai.access_score)
+        : Number(lead.access_score || 0);
+
+      const contactBoost = discoveredEmails.length || discoveredPhones.length ? 10 : 0;
+      const finalAccessScore = Math.min(100, mergedAccessScore + contactBoost);
+
       updates.push({
         id: lead.id,
         detected_need: ai.detected_need || lead.detected_need,
@@ -314,18 +393,34 @@ export async function POST(req: Request) {
         fit_score: Number.isFinite(Number(ai.fit_score)) ? Number(ai.fit_score) : lead.fit_score,
         need_score: Number.isFinite(Number(ai.need_score)) ? Number(ai.need_score) : lead.need_score,
         urgency_score: Number.isFinite(Number(ai.urgency_score)) ? Number(ai.urgency_score) : lead.urgency_score,
-        access_score: Number.isFinite(Number(ai.access_score)) ? Number(ai.access_score) : lead.access_score,
-        total_score: Number.isFinite(Number(ai.total_score)) ? Number(ai.total_score) : lead.total_score,
+        access_score: finalAccessScore,
+        total_score:
+          Number.isFinite(Number(ai.total_score))
+            ? Number(ai.total_score)
+            : lead.total_score,
+        ai_score:
+          Number.isFinite(Number(ai.total_score))
+            ? Number(ai.total_score)
+            : lead.ai_score ?? lead.total_score,
         ai_summary: ai.ai_summary || lead.ai_summary,
         ai_reasoning: ai.ai_reasoning || lead.ai_reasoning,
         outreach_angle: ai.outreach_angle || lead.outreach_angle,
         first_touch_message: ai.first_touch_message || lead.first_touch_message,
+        contact_email: lead.contact_email || discoveredEmails[0] || null,
+        contact_phone: lead.contact_phone || discoveredPhones[0] || null,
+        discovered_emails: discoveredEmails,
+        discovered_phones: discoveredPhones,
+        contact_page_url: contactPageUrl,
+        source_quality_score: discoveredEmails.length || discoveredPhones.length ? 90 : 65,
         website_analysis: {
           ...(ai.website_analysis || {}),
           fetch_ok: fetched.ok,
           http_status: fetched.status,
           analyzed_website: website,
           detected_signals: signals,
+          discovered_emails: discoveredEmails,
+          discovered_phones: discoveredPhones,
+          contact_page_url: contactPageUrl,
         },
         website_analyzed_at: new Date().toISOString(),
         website_analysis_model: process.env.OPENAI_LEAD_WEBSITE_MODEL || "fallback",
@@ -337,6 +432,8 @@ export async function POST(req: Request) {
         website,
         recommended_service_line: ai.recommended_service_line,
         detected_need: ai.detected_need,
+        discovered_emails: discoveredEmails,
+        discovered_phones: discoveredPhones,
       });
     }
 
