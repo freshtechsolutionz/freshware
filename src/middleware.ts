@@ -21,35 +21,43 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  let user = null;
+  let user: { id: string } | null = null;
 
   try {
     const { data } = await supabase.auth.getUser();
-    user = data?.user ?? null;
+    user = (data?.user as any) ?? null;
   } catch {
     user = null;
   }
 
   const path = request.nextUrl.pathname;
 
-  // ✅ ROOT handling (THIS FIXES MOBILE ISSUE)
+  // Root handling: logged-in users land in dashboard, everyone else sees homepage.
   if (path === "/") {
     if (user) {
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
-    return response; // let homepage render
+    return response;
   }
 
-  // ✅ Protect dashboard
+  // Protect dashboard
   if (path.startsWith("/dashboard") && !user) {
     const loginUrl = new URL("/portal", request.url);
     loginUrl.searchParams.set("next", path);
     return NextResponse.redirect(loginUrl);
   }
 
+  // Protect admin
+  if (path.startsWith("/admin") && !user) {
+    const loginUrl = new URL("/portal", request.url);
+    loginUrl.searchParams.set("next", path);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  response.headers.set("x-freshware-path", path);
   return response;
 }
 
 export const config = {
-  matcher: ["/", "/dashboard/:path*"],
+  matcher: ["/", "/dashboard/:path*", "/admin/:path*"],
 };

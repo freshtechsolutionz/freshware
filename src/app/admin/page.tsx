@@ -83,90 +83,116 @@ export default function AdminHomePage() {
     );
   }
 
-  if (!isAdmin) {
+  if (errorMsg) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white">
-        <header className="mx-auto max-w-4xl px-6 py-6">
-          <Link href="/" className="text-sm font-semibold text-gray-900 hover:underline">
-            Back to portal entry
-          </Link>
-        </header>
-        <main className="mx-auto max-w-4xl px-6 pb-16">
-          <div className="rounded-3xl border bg-white p-8 shadow-sm">
-            <div className="text-2xl font-semibold text-gray-900">Admin</div>
-            <div className="mt-2 text-sm text-gray-600">
-              You do not have permission to view this area.
-            </div>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white">
-      <header className="mx-auto max-w-6xl px-6 py-6 flex items-center justify-between">
-        <div>
+      <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white p-6">
+        <div className="mx-auto w-full max-w-4xl rounded-3xl border bg-white p-6 shadow-sm">
           <div className="text-xl font-semibold text-gray-900">Admin</div>
-          <div className="mt-1 text-sm text-gray-600">Welcome, {displayName}.</div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/"
-            className="rounded-2xl px-4 py-2 text-sm font-semibold border border-gray-300 hover:bg-gray-50"
-          >
-            Portal entry
-          </Link>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-6xl px-6 pb-16">
-        {errorMsg && (
-          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {errorMsg}
           </div>
-        )}
-
-        <section className="rounded-3xl border bg-white p-6 shadow-sm">
-          <div className="text-lg font-semibold text-gray-900">Admin tools</div>
-          <div className="mt-2 text-sm text-gray-600">
-            Manage invite-only onboarding and internal configuration.
-          </div>
-
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <AdminTile
-              title="Access Requests"
-              body="Review invite-only requests and approve or deny access."
-              href="/admin/access-requests"
-            />
-            <AdminTile
-  title="Users and Roles"
-  body="Manage users in your accounts and send password reset emails."
-  href="/admin/users"
-/>
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-}
-
-function AdminTile(props: { title: string; body: string; href: string; disabled?: boolean }) {
-  if (props.disabled) {
-    return (
-      <div className="rounded-3xl border bg-gray-50 p-6 opacity-70">
-        <div className="text-base font-semibold text-gray-900">{props.title}</div>
-        <div className="mt-2 text-sm text-gray-600">{props.body}</div>
-        <div className="mt-4 text-sm font-semibold text-gray-500">Coming soon</div>
+        </div>
       </div>
     );
   }
 
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white p-6">
+        <div className="mx-auto w-full max-w-4xl rounded-3xl border bg-white p-6 shadow-sm">
+          <div className="text-xl font-semibold text-gray-900">Admin</div>
+          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            You do not have access to this page.
+          </div>
+          <div className="mt-5">
+            <Link href="/dashboard" className="inline-flex rounded-2xl border px-4 py-2 text-sm font-semibold">
+              Back to Dashboard
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const cards = [
+    {
+      title: "Access Requests",
+      desc: "Review new access requests and approve pending users.",
+      href: "/admin/access-requests",
+      tag: "People",
+    },
+    {
+      title: "User Manager",
+      desc: "Update roles, invite users, and support account access.",
+      href: "/admin/users",
+      tag: "Permissions",
+    },
+    {
+      title: "System Health",
+      desc: "Check analytics, executive reports, and launch-critical visibility.",
+      href: "/dashboard/reports/analytics",
+      tag: "Launch",
+    },
+  ];
+
   return (
-    <Link href={props.href} className="rounded-3xl border bg-white p-6 hover:bg-gray-50 transition shadow-sm">
-      <div className="text-base font-semibold text-gray-900">{props.title}</div>
-      <div className="mt-2 text-sm text-gray-600">{props.body}</div>
-      <div className="mt-4 text-sm font-semibold text-gray-900">Open</div>
-    </Link>
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white p-6">
+      <div className="mx-auto w-full max-w-6xl space-y-6">
+        <div className="rounded-3xl border bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="text-2xl font-semibold text-gray-900">Admin Panel</div>
+              <div className="mt-1 text-sm text-gray-600">
+                Welcome back, {displayName}. Manage people, permissions, and launch readiness from one place.
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Link href="/dashboard" className="inline-flex rounded-2xl border px-4 py-2 text-sm font-semibold">
+                Dashboard
+              </Link>
+              <Link href="/dashboard/reports/weekly" className="inline-flex rounded-2xl border px-4 py-2 text-sm font-semibold">
+                Weekly Report
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {cards.map((card) => (
+            <Link
+              key={card.href}
+              href={card.href}
+              className="group rounded-3xl border bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="rounded-full border border-black/10 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
+                  {card.tag}
+                </span>
+                <span className="text-sm text-gray-400 group-hover:text-gray-700">Open</span>
+              </div>
+
+              <div className="mt-5 text-lg font-semibold text-gray-900">{card.title}</div>
+              <div className="mt-2 text-sm leading-6 text-gray-600">{card.desc}</div>
+            </Link>
+          ))}
+        </div>
+
+        <div className="rounded-3xl border bg-white p-6 shadow-sm">
+          <div className="text-lg font-semibold text-gray-900">Admin Notes</div>
+          <div className="mt-2 grid gap-3 md:grid-cols-3">
+            <div className="rounded-2xl border border-black/10 bg-gray-50 p-4 text-sm text-gray-700">
+              Use <span className="font-semibold">Access Requests</span> to clear onboarding friction before launch.
+            </div>
+            <div className="rounded-2xl border border-black/10 bg-gray-50 p-4 text-sm text-gray-700">
+              Use <span className="font-semibold">User Manager</span> for role corrections, invites, and account clean-up.
+            </div>
+            <div className="rounded-2xl border border-black/10 bg-gray-50 p-4 text-sm text-gray-700">
+              Use <span className="font-semibold">System Health</span> to spot reporting or visibility issues before clients see them.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

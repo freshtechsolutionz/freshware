@@ -28,7 +28,7 @@ export default function AgentPanel(_: AgentPanelProps) {
     {
       role: "assistant",
       text:
-        "Command Agent online.\n\nTry:\n- What should I focus on today?\n- Summarize pipeline + next best actions\n- Create a task: Follow up with top 3 prospects due Friday 2pm CST\n- Show project risks + fix plan",
+        "Command Agent online.\n\nI answer from Freshware first, then provide strategy when you need it.\n\nTry:\n- What should I focus on today?\n- Weekly executive report\n- Show stuck deals\n- Which enterprise deals are blocked?\n- Summarize pipeline + next best actions\n- Create a task: Follow up with top 3 prospects due Friday 2pm CST\n- Show project risks + fix plan",
     },
   ]);
   const [input, setInput] = useState("");
@@ -39,6 +39,7 @@ export default function AgentPanel(_: AgentPanelProps) {
   function pushUser(text: string) {
     setMessages((m) => [...m, { role: "user", text }]);
   }
+
   function pushAssistant(text: string) {
     setMessages((m) => [...m, { role: "assistant", text }]);
   }
@@ -81,7 +82,6 @@ export default function AgentPanel(_: AgentPanelProps) {
     }
   }
 
-  // Listen for Command Palette “AI commands”
   useEffect(() => {
     function onCmd(e: any) {
       const text = e?.detail?.text;
@@ -91,7 +91,6 @@ export default function AgentPanel(_: AgentPanelProps) {
     }
     window.addEventListener("freshware:agentCommand", onCmd as any);
     return () => window.removeEventListener("freshware:agentCommand", onCmd as any);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -99,12 +98,13 @@ export default function AgentPanel(_: AgentPanelProps) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-xl font-semibold tracking-tight text-zinc-900">Command Agent</div>
-          <div className="mt-1 text-sm text-zinc-600">Reports · Drilldowns · Actions</div>
+          <div className="mt-1 text-sm text-zinc-600">
+            Freshware intelligence · Executive answers · Actions
+          </div>
         </div>
         <span className="fw-chip">{busy ? "Working" : "Online"}</span>
       </div>
 
-      {/* Buttons now run AI commands inside the agent (not navigation) */}
       <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <button type="button" onClick={weeklyReport} disabled={busy} className="fw-btn h-11 text-sm disabled:opacity-60">
           Weekly Report
@@ -113,28 +113,34 @@ export default function AgentPanel(_: AgentPanelProps) {
         <button
           type="button"
           disabled={busy}
-          onClick={() => sendAgent("Review overdue tasks. Prioritize the top 10 by urgency and assign who should do what next.")}
+          onClick={() =>
+            sendAgent("What should I focus on today?")
+          }
           className="fw-btn h-11 text-sm disabled:opacity-60"
         >
-          Overdue – Prioritize
+          Focus Today
         </button>
 
         <button
           type="button"
           disabled={busy}
-          onClick={() => sendAgent("Summarize pipeline by stage and list top deals with next best actions to move them forward.")}
+          onClick={() =>
+            sendAgent("Show stuck deals and tell me what to do next.")
+          }
           className="fw-btn h-11 text-sm disabled:opacity-60"
         >
-          Pipeline – Actions
+          Stuck Deals
         </button>
 
         <button
           type="button"
           disabled={busy}
-          onClick={() => sendAgent("Analyze project health. Identify the riskiest projects and provide a fix plan for each.")}
+          onClick={() =>
+            sendAgent("Which enterprise deals are blocked and what information is missing?")
+          }
           className="fw-btn h-11 text-sm disabled:opacity-60"
         >
-          Projects – Risks
+          Enterprise Blockers
         </button>
       </div>
 
@@ -144,16 +150,16 @@ export default function AgentPanel(_: AgentPanelProps) {
           <div className="text-xs text-zinc-600">Enter to send · Shift+Enter for newline</div>
         </div>
 
-        <div className="fw-scroll max-h-[340px] overflow-auto p-4 space-y-3">
+        <div className="fw-scroll max-h-[340px] space-y-3 overflow-auto p-4">
           {messages.map((m, idx) => (
             <div
               key={idx}
               className={cls(
                 "rounded-2xl border border-black/10 p-3",
-                m.role === "user" ? "bg-black text-white border-black/20" : "bg-white text-zinc-900"
+                m.role === "user" ? "border-black/20 bg-black text-white" : "bg-white text-zinc-900"
               )}
             >
-              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed m-0">{m.text}</pre>
+              <pre className="m-0 whitespace-pre-wrap font-sans text-sm leading-relaxed">{m.text}</pre>
             </div>
           ))}
         </div>
@@ -170,7 +176,7 @@ export default function AgentPanel(_: AgentPanelProps) {
                 }
               }}
               className="fw-input"
-              placeholder="Ask a CEO question or issue a command..."
+              placeholder="Ask an executive question or issue a command..."
             />
             <button
               onClick={() => sendAgent(input)}
@@ -186,7 +192,9 @@ export default function AgentPanel(_: AgentPanelProps) {
           </div>
 
           <div className="mt-2 text-[11px] text-zinc-600">
-            Tip: Press <span className="font-semibold">⌘K / Ctrl+K</span> for Command Palette.
+            Tip: Ask things like <span className="font-semibold">Show stuck deals</span>,{" "}
+            <span className="font-semibold">Where is my biggest pipeline risk?</span>, or{" "}
+            <span className="font-semibold">What should I focus on today?</span>
           </div>
         </div>
       </div>

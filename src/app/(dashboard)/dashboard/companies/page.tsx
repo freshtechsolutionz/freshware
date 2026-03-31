@@ -6,6 +6,11 @@ import PageHeader from "@/components/dashboard/PageHeader";
 
 export const runtime = "nodejs";
 
+type CompanyRow = Record<string, any>;
+type ContactRow = Record<string, any>;
+type OpportunityRow = Record<string, any>;
+type ProjectRow = Record<string, any>;
+
 function money(n: number | null | undefined) {
   const v = Number(n || 0);
   return new Intl.NumberFormat(undefined, {
@@ -16,51 +21,43 @@ function money(n: number | null | undefined) {
 }
 
 function pretty(v: string | null | undefined) {
-  if (!v) return "N/A";
-  return v;
+  return v || "N/A";
 }
 
-function chipClass(value: string | null | undefined, kind: "priority" | "lifecycle") {
-  const v = String(value || "").toUpperCase();
+function chipClass(value: string | null | undefined, kind: "lifecycle" | "priority") {
+  const v = String(value || "").toLowerCase();
 
-  if (kind === "priority") {
-    if (v === "HIGH" || v === "STRATEGIC") return "border-red-200 bg-red-50 text-red-700";
-    if (v === "MEDIUM" || v === "STANDARD") return "border-amber-200 bg-amber-50 text-amber-700";
-    if (v === "LOW") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (kind === "lifecycle") {
+    if (v.includes("customer")) return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    if (v.includes("proposal") || v.includes("negotiation")) return "border-blue-200 bg-blue-50 text-blue-700";
+    if (v.includes("lead") || v.includes("prospect")) return "border-amber-200 bg-amber-50 text-amber-700";
     return "border-gray-200 bg-gray-50 text-gray-700";
   }
 
-  if (v.includes("CUSTOMER") || v.includes("ACTIVE")) return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (v.includes("PROSPECT") || v.includes("TRIAL")) return "border-blue-200 bg-blue-50 text-blue-700";
-  if (v.includes("LEAD")) return "border-violet-200 bg-violet-50 text-violet-700";
-  if (v.includes("RISK") || v.includes("CHURN")) return "border-red-200 bg-red-50 text-red-700";
+  if (v.includes("high") || v.includes("urgent")) {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+  if (v.includes("medium")) {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (v.includes("low")) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
   return "border-gray-200 bg-gray-50 text-gray-700";
 }
 
-type CompanyRow = {
-  id: string;
-  name: string | null;
-  website: string | null;
-  industry: string | null;
-  city: string | null;
-  state: string | null;
-  customer_segment: string | null;
-  lifecycle_stage: string | null;
-  priority_level: string | null;
-  primary_business_goals: string | null;
-  top_pain_points: string | null;
-  internal_account_owner: string | null;
-  ai_company_info?: {
-    executiveSummary?: string;
-  } | null;
-};
+function normalizeName(v: string | null | undefined) {
+  return String(v || "").trim().toLowerCase();
+}
 
-export default async function CompaniesIndexPage({
+export default async function CompaniesPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ new?: string; created?: string; linked?: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const sp = (await searchParams) || {};
+  const sp = ((await searchParams) || {}) as Record<string, string | string[] | undefined>;
+
   const cookieStore = await cookies();
 
   const supabase = createServerClient(
@@ -74,7 +71,7 @@ export default async function CompaniesIndexPage({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("id, role, account_id, full_name")
+    .select("id, role, account_id")
     .eq("id", auth.user.id)
     .maybeSingle();
 
@@ -88,92 +85,77 @@ export default async function CompaniesIndexPage({
   }
 
   const accountId = profile.account_id;
-  const roleUpper = String(profile.role || "").toUpperCase();
-  const canEdit = ["CEO", "ADMIN", "STAFF", "OPS", "SALES", "MARKETING"].includes(roleUpper);
+  const canEdit = ["CEO", "ADMIN", "STAFF", "OPS", "SALES", "MARKETING"].includes(
+    String(profile.role || "").toUpperCase()
+  );
 
-  const { data: companiesRaw, error } = await supabase
-    .from("companies")
-    .select(`
-      id,
-      name,
-      website,
-      industry,
-      city,
-      state,
-      customer_segment,
-      lifecycle_stage,
-      priority_level,
-      primary_business_goals,
-      top_pain_points,
-      internal_account_owner,
-      ai_company_info
-    `)
-    .eq("account_id", accountId)
-    .order("name", { ascending: true });
+  const [companiesRes, contactsRes, oppsRes, projectsRes] = await Promise.all([
+    supabase.from("companies").select("*").eq("account_id", accountId).order("name", { ascending: true }),
+    supabase
+      .from("contacts")
+      .select("id, name, email, company_id")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("opportunities")
+      .select("id, name, amount, stage, company_id")
+      .eq("account_id", accountId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("projects")
+      .select("id, name, status, support_monthly_cost, company_id")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false }),
+  ]);
 
-  if (error) {
+  if (companiesRes.error) {
     return (
       <div className="fw-card-strong p-7">
         <div className="text-lg font-semibold">Company Profiles</div>
-        <div className="mt-2 text-sm text-red-600">{error.message}</div>
+        <div className="mt-2 text-sm text-red-600">{companiesRes.error.message}</div>
       </div>
     );
   }
 
-  const companies = (companiesRaw || []) as CompanyRow[];
-  const companyIds = companies.map((c) => c.id);
+  const companies = (companiesRes.data || []) as CompanyRow[];
+  const contacts = (contactsRes.data || []) as ContactRow[];
+  const opps = (oppsRes.data || []) as OpportunityRow[];
+  const projects = (projectsRes.data || []) as ProjectRow[];
 
-  let contactCounts: Record<string, number> = {};
-  let oppMetrics: Record<string, { open: number; pipeline: number; won: number }> = {};
-  let projectMetrics: Record<string, { total: number; active: number; support: number }> = {};
+  const contactMetrics: Record<string, number> = {};
+  const oppMetrics: Record<string, { open: number; pipeline: number; won: number }> = {};
+  const projectMetrics: Record<string, { total: number; active: number; support: number }> = {};
 
-  if (companyIds.length) {
-    const [contactsRes, oppRes, projectRes] = await Promise.all([
-      supabase
-        .from("contacts")
-        .select("id, company_id")
-        .eq("account_id", accountId)
-        .in("company_id", companyIds),
+  for (const company of companies) {
+    const key = company.id;
+    contactMetrics[key] = 0;
+    oppMetrics[key] = { open: 0, pipeline: 0, won: 0 };
+    projectMetrics[key] = { total: 0, active: 0, support: 0 };
+  }
 
-      supabase
-        .from("opportunities")
-        .select("id, company_id, amount, stage")
-        .eq("account_id", accountId)
-        .in("company_id", companyIds)
-        .is("deleted_at", null),
+  for (const row of contacts) {
+    const key = row.company_id || "";
+    if (key && key in contactMetrics) contactMetrics[key] += 1;
+  }
 
-      supabase
-        .from("projects")
-        .select("id, company_id, status, support_monthly_cost")
-        .eq("account_id", accountId)
-        .in("company_id", companyIds),
-    ]);
-
-    for (const row of (contactsRes.data || []) as any[]) {
-      const key = row.company_id;
-      contactCounts[key] = (contactCounts[key] || 0) + 1;
-    }
-
-    for (const row of (oppRes.data || []) as any[]) {
-      const key = row.company_id;
-      if (!oppMetrics[key]) oppMetrics[key] = { open: 0, pipeline: 0, won: 0 };
-
+  for (const row of opps) {
+    const key = row.company_id || "";
+    if (key && key in oppMetrics) {
       const stage = String(row.stage || "").toLowerCase();
       const amount = Number(row.amount || 0);
-
-      if (stage !== "won" && stage !== "lost") {
+      if (stage === "won") {
+        oppMetrics[key].won += amount;
+      } else if (stage !== "lost") {
         oppMetrics[key].open += 1;
         oppMetrics[key].pipeline += amount;
       }
-      if (stage === "won") {
-        oppMetrics[key].won += amount;
-      }
     }
+  }
 
-    for (const row of (projectRes.data || []) as any[]) {
-      const key = row.company_id;
-      if (!projectMetrics[key]) projectMetrics[key] = { total: 0, active: 0, support: 0 };
-
+  for (const row of projects) {
+    const key = row.company_id || "";
+    if (key && key in projectMetrics) {
       const status = String(row.status || "").toLowerCase();
       projectMetrics[key].total += 1;
       if (!["done", "closed", "completed", "cancelled", "canceled"].includes(status)) {
@@ -216,7 +198,7 @@ export default async function CompaniesIndexPage({
     <div className="space-y-6">
       <PageHeader
         title="Company Profiles"
-        subtitle="CEO-friendly customer intelligence across companies, pipeline, projects, support revenue, and future lead-generation targeting."
+        subtitle="Executive customer intelligence across companies, pipeline, projects, support revenue, and lead-generation targeting."
         right={
           <div className="flex flex-wrap gap-2">
             <Link href="/dashboard/lead-generation" className="fw-btn text-sm">
@@ -257,117 +239,34 @@ export default async function CompaniesIndexPage({
         <section className="rounded-3xl border bg-white p-6 shadow-sm">
           <div className="text-lg font-semibold text-gray-900">Create New Company</div>
           <div className="mt-1 text-sm text-gray-600">
-            Start with the CEO-first fields. You can fill the full 360 profile after creation.
+            Start with the executive-first fields. You can enrich and expand the full 360 profile after creation.
           </div>
 
           <form action="/api/companies" method="post" className="mt-5 grid gap-4 md:grid-cols-2">
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Company Name</label>
-              <input
-                name="name"
-                required
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="e.g. Houston Business Development Inc"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Website</label>
-              <input
-                name="website"
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="https://example.com"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Industry</label>
-              <input
-                name="industry"
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="e.g. Healthcare, Education, Business Development"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">City</label>
-              <input
-                name="city"
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="Houston"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">State</label>
-              <input
-                name="state"
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="TX"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Customer Segment</label>
-              <input
-                name="customer_segment"
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="SMB, Mid-Market, Enterprise, Nonprofit, etc."
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Lifecycle Stage</label>
-              <input
-                name="lifecycle_stage"
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="Lead, Prospect, Active Customer, At Risk"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Priority Level</label>
-              <input
-                name="priority_level"
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="Strategic, Standard, Low"
-              />
-            </div>
-
-            <div className="space-y-1 md:col-span-2">
-              <label className="text-sm font-medium">Primary Business Goals</label>
+            <Field name="name" label="Company Name" required placeholder="e.g. Houston Business Development Inc" />
+            <Field name="website" label="Website" placeholder="https://example.com" />
+            <Field name="industry" label="Industry" placeholder="Healthcare, Education, Business Development" />
+            <Field name="city" label="City" placeholder="Houston" />
+            <Field name="state" label="State" placeholder="TX" />
+            <Field name="customer_segment" label="Customer Segment" placeholder="Startup, SMB, Enterprise, Nonprofit" />
+            <Field name="lifecycle_stage" label="Lifecycle Stage" placeholder="Lead, Prospect, Proposal, Customer" />
+            <Field name="priority_level" label="Priority Level" placeholder="High, Medium, Low" />
+            <Field name="internal_account_owner" label="Internal Account Owner" placeholder="Derrell, Ops, Sales" />
+            <div className="md:col-span-2">
+              <label className="text-sm font-medium">Executive Notes</label>
               <textarea
-                name="primary_business_goals"
-                rows={3}
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="What is this company trying to accomplish?"
+                name="notes"
+                rows={4}
+                className="mt-1 w-full rounded-2xl border px-3 py-2 text-sm"
+                placeholder="What matters most about this account right now?"
               />
             </div>
 
-            <div className="space-y-1 md:col-span-2">
-              <label className="text-sm font-medium">Top Pain Points</label>
-              <textarea
-                name="top_pain_points"
-                rows={3}
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-                placeholder="What problems are most likely costing them time, money, or growth?"
-              />
-            </div>
-
-            <div className="space-y-1 md:col-span-2">
-              <label className="text-sm font-medium">Internal Account Owner</label>
-              <input
-                name="internal_account_owner"
-                defaultValue={profile.full_name || ""}
-                className="w-full rounded-2xl border px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div className="md:col-span-2 flex flex-wrap gap-3">
-              <button type="submit" className="rounded-2xl bg-black px-4 py-2 text-sm font-semibold text-white">
+            <div className="md:col-span-2 flex gap-2 pt-2">
+              <button type="submit" className="fw-btn text-sm">
                 Create Company
               </button>
-              <Link href="/dashboard/companies" className="rounded-2xl border px-4 py-2 text-sm font-semibold">
+              <Link href="/dashboard/companies" className="fw-btn text-sm">
                 Cancel
               </Link>
             </div>
@@ -375,92 +274,57 @@ export default async function CompaniesIndexPage({
         </section>
       ) : null}
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="fw-card-strong p-6">
-          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Companies</div>
-          <div className="mt-2 text-3xl font-semibold text-gray-900">{companies.length}</div>
-          <div className="mt-2 text-sm text-gray-600">Tracked company profiles</div>
-        </div>
-
-        <div className="fw-card-strong p-6">
-          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Open Pipeline</div>
-          <div className="mt-2 text-3xl font-semibold text-gray-900">{money(totalPipeline)}</div>
-          <div className="mt-2 text-sm text-gray-600">Open opportunities tied to companies</div>
-        </div>
-
-        <div className="fw-card-strong p-6">
-          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Won Revenue</div>
-          <div className="mt-2 text-3xl font-semibold text-gray-900">{money(totalWon)}</div>
-          <div className="mt-2 text-sm text-gray-600">Closed-won opportunity value</div>
-        </div>
-
-        <div className="fw-card-strong p-6">
-          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Support MRR</div>
-          <div className="mt-2 text-3xl font-semibold text-gray-900">{money(totalSupport)}</div>
-          <div className="mt-2 text-sm text-gray-600">Monthly support across linked projects</div>
-        </div>
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+        <MetricCard title="Companies" value={String(companies.length)} sub="Profiles tracked" />
+        <MetricCard title="Open Pipeline" value={money(totalPipeline)} sub="Across linked companies" />
+        <MetricCard title="Won Revenue" value={money(totalWon)} sub="Closed-won opportunity value" />
+        <MetricCard title="Support Revenue" value={money(totalSupport)} sub="Recurring support value" />
+        <MetricCard title="Unlinked Records" value={String(unlinkedContacts + unlinkedOpps + unlinkedProjects)} sub={`${unlinkedContacts} contacts · ${unlinkedOpps} opps · ${unlinkedProjects} projects`} />
+        <MetricCard title="Action" value={canEdit ? "Ready" : "View"} sub={canEdit ? "You can create, link, and enrich." : "Read-only visibility"} />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
-        <div className="rounded-3xl border bg-white p-5 shadow-sm">
-          <div className="text-sm font-semibold text-gray-900">Unlinked Contacts</div>
-          <div className="mt-2 text-3xl font-semibold text-gray-900">{unlinkedContacts}</div>
-          <div className="mt-2 text-sm text-gray-600">Contacts not yet attached to a company profile</div>
+      <section className="rounded-3xl border bg-white p-6 shadow-sm">
+        <div className="text-lg font-semibold text-gray-900">Company Profile Command View</div>
+        <div className="mt-1 text-sm text-gray-600">
+          This is the cleanest place to understand how accounts connect to pipeline, projects, support revenue, and future targeting.
         </div>
 
-        <div className="rounded-3xl border bg-white p-5 shadow-sm">
-          <div className="text-sm font-semibold text-gray-900">Unlinked Opportunities</div>
-          <div className="mt-2 text-3xl font-semibold text-gray-900">{unlinkedOpps}</div>
-          <div className="mt-2 text-sm text-gray-600">Pipeline records not yet mapped to company profiles</div>
-        </div>
-
-        <div className="rounded-3xl border bg-white p-5 shadow-sm">
-          <div className="text-sm font-semibold text-gray-900">Unlinked Projects</div>
-          <div className="mt-2 text-3xl font-semibold text-gray-900">{unlinkedProjects}</div>
-          <div className="mt-2 text-sm text-gray-600">Projects that still need a company profile attached</div>
-        </div>
-      </section>
-
-      <section className="fw-card-strong p-7">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-lg font-semibold text-gray-900">Company Intelligence Index</div>
-            <div className="mt-1 text-sm text-gray-600">
-              Start with the highest-value CEO fields first. Drill into each company for the full 360.
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 overflow-x-auto">
-          <table className="min-w-full border-separate border-spacing-y-3">
+        <div className="mt-5 overflow-x-auto">
+          <table className="min-w-[1180px] w-full border-separate border-spacing-y-2">
             <thead>
-              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                <th className="px-3">Company</th>
-                <th className="px-3">Segment</th>
-                <th className="px-3">Lifecycle</th>
-                <th className="px-3">Priority</th>
-                <th className="px-3">Contacts</th>
-                <th className="px-3">Open Pipeline</th>
-                <th className="px-3">Projects</th>
-                <th className="px-3">Support MRR</th>
-                <th className="px-3">Owner</th>
-                <th className="px-3">Actions</th>
+              <tr className="text-left text-xs uppercase tracking-wide text-gray-500">
+                <th className="px-3 py-2">Company</th>
+                <th className="px-3 py-2">Segment</th>
+                <th className="px-3 py-2">Lifecycle</th>
+                <th className="px-3 py-2">Priority</th>
+                <th className="px-3 py-2">Contacts</th>
+                <th className="px-3 py-2">Pipeline</th>
+                <th className="px-3 py-2">Projects</th>
+                <th className="px-3 py-2">Support</th>
+                <th className="px-3 py-2">Owner</th>
+                <th className="px-3 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
               {companies.map((company) => {
-                const opp = oppMetrics[company.id] || { open: 0, pipeline: 0, won: 0 };
-                const proj = projectMetrics[company.id] || { total: 0, active: 0, support: 0 };
-                const contacts = contactCounts[company.id] || 0;
-                const summary = company.ai_company_info?.executiveSummary || null;
+                const key = company.id;
+                const contactsCount = contactMetrics[key] || 0;
+                const opp = oppMetrics[key] || { open: 0, pipeline: 0, won: 0 };
+                const proj = projectMetrics[key] || { total: 0, active: 0, support: 0 };
+
+                const summary =
+                  company.ai_company_info?.executiveSummary ||
+                  company.ai_company_info?.executive_summary ||
+                  company.ai_company_info?.summary ||
+                  "";
 
                 return (
-                  <tr key={company.id} className="bg-white shadow-sm">
-                    <td className="rounded-l-2xl border-y border-l px-3 py-4 align-top">
-                      <div className="min-w-[220px]">
+                  <tr key={company.id}>
+                    <td className="rounded-l-2xl border-y border-l px-3 py-4">
+                      <div className="min-w-[280px]">
                         <Link
                           href={`/dashboard/companies/${company.id}`}
-                          className="text-sm font-semibold text-gray-900 underline underline-offset-4"
+                          className="text-sm font-semibold text-gray-900 hover:underline"
                         >
                           {company.name || "Unnamed Company"}
                         </Link>
@@ -468,7 +332,7 @@ export default async function CompaniesIndexPage({
                           {pretty(company.industry)} • {pretty([company.city, company.state].filter(Boolean).join(", "))}
                         </div>
                         {company.website ? (
-                          <div className="mt-1 text-xs text-blue-700">{company.website}</div>
+                          <div className="mt-1 text-xs text-blue-700 break-all">{company.website}</div>
                         ) : null}
                         {summary ? (
                           <div className="mt-2 line-clamp-3 text-xs text-gray-600">{summary}</div>
@@ -490,7 +354,7 @@ export default async function CompaniesIndexPage({
                       </span>
                     </td>
 
-                    <td className="border-y px-3 py-4 text-sm text-gray-700">{contacts}</td>
+                    <td className="border-y px-3 py-4 text-sm text-gray-700">{contactsCount}</td>
 
                     <td className="border-y px-3 py-4">
                       <div className="text-sm font-semibold text-gray-900">{money(opp.pipeline)}</div>
@@ -542,6 +406,35 @@ export default async function CompaniesIndexPage({
           ) : null}
         </div>
       </section>
+    </div>
+  );
+}
+
+function MetricCard(props: { title: string; value: string; sub: string }) {
+  return (
+    <div className="rounded-3xl border bg-white p-5 shadow-sm">
+      <div className="text-xs text-gray-500">{props.title}</div>
+      <div className="mt-2 text-3xl font-semibold text-gray-900">{props.value}</div>
+      <div className="mt-1 text-sm text-gray-600">{props.sub}</div>
+    </div>
+  );
+}
+
+function Field(props: {
+  name: string;
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <label className="text-sm font-medium">{props.label}</label>
+      <input
+        name={props.name}
+        required={props.required}
+        className="w-full rounded-2xl border px-3 py-2 text-sm"
+        placeholder={props.placeholder}
+      />
     </div>
   );
 }

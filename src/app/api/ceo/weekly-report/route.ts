@@ -37,11 +37,15 @@ async function getViewer() {
     .maybeSingle();
 
   if (!profile) return { ok: false as const, reason: "Missing profile row" };
-  return { ok: true as const, profile: profile as ProfileRow };
+  return { ok: true as const, profile: profile as ProfileRow, supabase };
 }
 
 function fmtMoney(n: number) {
-  return "$" + new Intl.NumberFormat().format(Math.round(n));
+  return "$" + new Intl.NumberFormat().format(Math.round(n || 0));
+}
+
+function fmtNum(n: number) {
+  return new Intl.NumberFormat().format(Math.round(n || 0));
 }
 
 export async function GET() {
@@ -49,7 +53,7 @@ export async function GET() {
     const viewer = await getViewer();
     if (!viewer.ok) return NextResponse.json({ error: viewer.reason }, { status: 401 });
 
-    const { profile } = viewer;
+    const { profile, supabase } = viewer;
     if (!profile.account_id) return NextResponse.json({ error: "Missing profiles.account_id" }, { status: 400 });
     if (!isStaff(profile.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
@@ -57,94 +61,142 @@ export async function GET() {
     if (!svc) return NextResponse.json({ error: "Missing SUPABASE_SERVICE_ROLE_KEY" }, { status: 500 });
 
     const accountId = profile.account_id;
-    const now = new Date();
 
-    const [oppRes, projRes, tasksRes, meetingsRes] = await Promise.all([
-      svc.from("opportunities").select("id, name, stage, amount").eq("account_id", accountId),
-      svc.from("projects").select("id, name, status, health").eq("account_id", accountId),
-      svc.from("tasks").select("task_id, title, status, due_at").eq("account_id", accountId),
-      svc.from("meetings").select("id", { count: "exact", head: true }).eq("account_id", accountId),
+    const [overviewRes, digestRes, mondayRes] = await Promise.all([
+      fetch(`${process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"}/api/ceo/overview`, {
+        headers: { cookie: "" },
+        cache: "no-store",
+      }).catch(() => null),
+      supabase
+        .from("lead_prospects")
+        .select("status, outreach_status, next_follow_up_at, total_score")
+        .eq("account_id", accountId),
+      svc.rpc("ceo_monday_summary"),
     ]);
 
-    const oppRows = oppRes.error ? [] : ((oppRes.data || []) as any[]);
-    const openOpp = oppRows.filter((r) => {
-      const s = String(r.stage || "").toLowerCase();
-      return s !== "won" && s !== "lost";
-    });
-
-    const openOppCount = openOpp.length;
-    const openPipeline = openOpp.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-
-    const pipelineByStageMap: Record<string, { count: number; amount: number }> = {};
-    for (const r of openOpp) {
-      const stage = String(r.stage || "Unstaged");
-      if (!pipelineByStageMap[stage]) pipelineByStageMap[stage] = { count: 0, amount: 0 };
-      pipelineByStageMap[stage].count += 1;
-      pipelineByStageMap[stage].amount += Number(r.amount) || 0;
+    let overview: any = null;
+    if (overviewRes) {
+      const ct = overviewRes.headers.get("content-type") || "";
+      if (ct.toLowerCase().includes("application/json")) {
+        const json = await overviewRes.json().catch(() => null);
+        overview = json?.kpis ? json.kpis : null;
+      }
     }
 
-    const topStages = Object.entries(pipelineByStageMap)
-      .map(([stage, v]) => ({ stage, count: v.count, amount: v.amount }))
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 3);
+    const summary = mondayRes.error ? null : mondayRes.data;
 
-    const topDeals = openOpp
-      .slice()
-      .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0))
-      .slice(0, 3)
-      .map((r) => ({
-        id: r.id,
-        name: r.name || null,
-        stage: r.stage || null,
-        amount: Number(r.amount) || 0,
-      }));
+    const leadRows = (digestRes.data || []) as Array<{
+      status: string | null;
+      outreach_status: string | null;
+      next_follow_up_at: string | null;
+      total_score: number | null;
+    }>;
 
-    const projRows = projRes.error ? [] : ((projRes.data || []) as any[]);
-    const totalProjects = projRows.length;
-    const activeProjects = projRows.filter((r) => {
-      const s = String(r.status || "").toLowerCase();
-      return !["done", "closed", "completed", "cancelled"].includes(s);
-    }).length;
-
-    const taskRows = tasksRes.error ? [] : ((tasksRes.data || []) as any[]);
-    const totalTasks = taskRows.length;
-    const overdueTasks = taskRows.filter((t) => {
-      const st = String(t.status || "").toLowerCase();
-      const done = st === "done";
-      const due = t.due_at ? new Date(String(t.due_at)) : null;
-      return !!due && !done && due.getTime() < now.getTime();
-    }).length;
-
-    const blockedTasks = taskRows.filter((t) => String(t.status || "").toLowerCase() === "blocked").length;
-    const meetingsBooked = meetingsRes.count ?? 0;
+    const leadDigest = {
+      newLeads: leadRows.filter((l) => String(l.status || "").toUpperCase() === "NEW").length,
+      responded: leadRows.filter((l) => String(l.outreach_status || "").toUpperCase() === "RESPONDED").length,
+      followUpDue: leadRows.filter((l) => {
+        if (!l.next_follow_up_at) return false;
+        const d = new Date(l.next_follow_up_at);
+        return !Number.isNaN(d.getTime()) && d.getTime() <= Date.now();
+      }).length,
+      highScore: leadRows.filter((l) => Number(l.total_score || 0) >= 80).length,
+      total: leadRows.length,
+    };
 
     const lines: string[] = [];
-    lines.push("Freshware CEO Weekly Report");
-    lines.push("");
-    lines.push("Scoreboard");
-    lines.push(`Open pipeline: ${fmtMoney(openPipeline)} across ${openOppCount} deals`);
-    lines.push(`Active projects: ${activeProjects} (total ${totalProjects})`);
-    lines.push(`Tasks: ${totalTasks} total, ${overdueTasks} overdue, ${blockedTasks} blocked`);
-    lines.push(`Meetings booked: ${meetingsBooked}`);
+    lines.push("Freshware Weekly Executive Report");
     lines.push("");
 
-    lines.push("Pipeline focus (top stages by value)");
-    if (!topStages.length) lines.push("No staged open pipeline data yet.");
-    for (const s of topStages) lines.push(`- ${s.stage}: ${fmtMoney(s.amount)} (${s.count} deals)`);
+    if (summary?.kpis) {
+      lines.push("Executive Scoreboard");
+      lines.push(
+        `Open pipeline: ${fmtMoney(Number(summary.kpis.pipeline_amount_all || 0))} across ${fmtNum(Number(summary.kpis.opp_count_all || 0))} total opportunities`
+      );
+      lines.push(
+        `Weighted pipeline: ${fmtMoney(Number(summary.kpis.weighted_pipeline_all || 0))}`
+      );
+      lines.push(
+        `Enterprise weighted pipeline: ${fmtMoney(Number(summary.kpis.weighted_pipeline_enterprise || 0))}`
+      );
+      lines.push(
+        `Average days since activity: ${fmtNum(Number(summary.kpis.avg_days_since_activity_all || 0))}`
+      );
+      lines.push("");
+    }
+
+    if (overview) {
+      lines.push("Execution and Delivery");
+      lines.push(`Active projects: ${fmtNum(Number(overview.activeProjects || 0))} (total ${fmtNum(Number(overview.totalProjects || 0))})`);
+      lines.push(`Tasks: ${fmtNum(Number(overview.overdueTasks || 0))} overdue, ${fmtNum(Number(overview.blockedTasks || 0))} blocked`);
+      lines.push(`Meetings booked: ${fmtNum(Number(overview.meetingsBooked || 0))}`);
+      lines.push("");
+    }
+
+    lines.push("Lead Generation");
+    lines.push(`New leads: ${fmtNum(leadDigest.newLeads)}`);
+    lines.push(`High-score leads (80+): ${fmtNum(leadDigest.highScore)}`);
+    lines.push(`Follow-ups due: ${fmtNum(leadDigest.followUpDue)}`);
+    lines.push(`Responded outreach: ${fmtNum(leadDigest.responded)}`);
     lines.push("");
 
-    lines.push("Top deals to push");
-    if (!topDeals.length) lines.push("No open deals found.");
-    for (const d of topDeals) lines.push(`- ${String(d.name || d.id).slice(0, 52)}: ${fmtMoney(d.amount)} (stage: ${d.stage || "Unstaged"})`);
+    lines.push("Pipeline focus");
+    if (summary?.stage_breakdown?.length) {
+      for (const stage of summary.stage_breakdown.slice(0, 5)) {
+        lines.push(
+          `- ${stage.stage}: ${fmtMoney(Number(stage.pipeline_amount || 0))} (${fmtNum(Number(stage.opp_count || 0))} deals)`
+        );
+      }
+    } else {
+      lines.push("No stage breakdown available.");
+    }
     lines.push("");
 
-    lines.push("CEO priorities (do these first)");
-    lines.push("1) Push the top 3 deals to a decision date and next action.");
-    lines.push("2) Clear blocked tasks first, then overdue tasks.");
-    lines.push("3) Confirm milestones for every active project and communicate them.");
+    lines.push("Stuck deals");
+    if (summary?.stuck_deals?.length) {
+      for (const deal of summary.stuck_deals.slice(0, 5)) {
+        lines.push(
+          `- ${String(deal.opportunity_name || "Unnamed deal").slice(0, 60)}: ${fmtMoney(Number(deal.weighted_amount || deal.amount || 0))} • ${fmtNum(Number(deal.days_since_activity || 0))} days idle`
+        );
+      }
+    } else {
+      lines.push("No stuck deals found.");
+    }
     lines.push("");
 
-    return NextResponse.json({ text: lines.join("\n") });
+    lines.push("Enterprise blockers");
+    if (summary?.enterprise_blockers?.length) {
+      for (const deal of summary.enterprise_blockers.slice(0, 5)) {
+        const blockers = [
+          deal.missing_budget ? "budget" : null,
+          deal.missing_timeline ? "timeline" : null,
+          deal.missing_decision_maker ? "decision maker" : null,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        lines.push(
+          `- ${String(deal.opportunity_name || "Unnamed deal").slice(0, 60)}: missing ${blockers || "core info"}`
+        );
+      }
+    } else {
+      lines.push("No enterprise blockers found.");
+    }
+    lines.push("");
+
+    lines.push("Executive priorities");
+    lines.push("1) Move stuck deals to a clear next step with owner and date.");
+    lines.push("2) Clear enterprise blockers on high-value opportunities.");
+    lines.push("3) Work overdue follow-ups and high-score leads before new sourcing.");
+    lines.push("4) Reduce overdue and blocked execution items so delivery does not drag growth.");
+    lines.push("");
+
+    return NextResponse.json({
+      text: lines.join("\n"),
+      generated_at: new Date().toISOString(),
+      summary: summary || null,
+      overview: overview || null,
+      lead_digest: leadDigest,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Unknown error" }, { status: 500 });
   }

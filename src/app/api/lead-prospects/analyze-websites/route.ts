@@ -133,7 +133,6 @@ function extractPhones(html: string, text: string) {
 
 function extractContactPageUrl(html: string, baseWebsite: string) {
   const hrefRegex = /href=["']([^"']+)["']/gi;
-  const lower = html.toLowerCase();
   const candidates: string[] = [];
   let match: RegExpExecArray | null;
 
@@ -338,7 +337,7 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const limit = Math.max(1, Math.min(100, Number(body?.limit || 50)));
+    const limit = Math.max(1, Math.min(100, Number(body?.limit || 25)));
 
     const { data: leads, error } = await supabase
       .from("lead_prospects")
@@ -394,14 +393,8 @@ export async function POST(req: Request) {
         need_score: Number.isFinite(Number(ai.need_score)) ? Number(ai.need_score) : lead.need_score,
         urgency_score: Number.isFinite(Number(ai.urgency_score)) ? Number(ai.urgency_score) : lead.urgency_score,
         access_score: finalAccessScore,
-        total_score:
-          Number.isFinite(Number(ai.total_score))
-            ? Number(ai.total_score)
-            : lead.total_score,
-        ai_score:
-          Number.isFinite(Number(ai.total_score))
-            ? Number(ai.total_score)
-            : lead.ai_score ?? lead.total_score,
+        total_score: Number.isFinite(Number(ai.total_score)) ? Number(ai.total_score) : lead.total_score,
+        ai_score: Number.isFinite(Number(ai.total_score)) ? Number(ai.total_score) : lead.ai_score ?? lead.total_score,
         ai_summary: ai.ai_summary || lead.ai_summary,
         ai_reasoning: ai.ai_reasoning || lead.ai_reasoning,
         outreach_angle: ai.outreach_angle || lead.outreach_angle,

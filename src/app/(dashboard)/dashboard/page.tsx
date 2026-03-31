@@ -90,10 +90,12 @@ function toArray(value: unknown): string[] {
 }
 
 function hasLeadContact(lead: LeadProspect) {
-  return Boolean(lead.contact_email) ||
+  return (
+    Boolean(lead.contact_email) ||
     Boolean(lead.contact_phone) ||
     toArray(lead.discovered_emails).length > 0 ||
-    toArray(lead.discovered_phones).length > 0;
+    toArray(lead.discovered_phones).length > 0
+  );
 }
 
 function isFollowUpDue(value: string | null | undefined) {
@@ -180,7 +182,6 @@ export default async function DashboardHome() {
   const visitors = await getVisitors(baseUrl);
 
   const now = new Date();
-  const monthStart = startOfMonth(now);
   const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const yearStart = startOfYear(now);
   const thirtyDaysAgoIso = daysAgo(30).toISOString();
@@ -238,7 +239,9 @@ export default async function DashboardHome() {
 
     supabase
       .from("lead_prospects")
-      .select("id, company_name, website, total_score, source_label, source_type, outreach_status, next_follow_up_at, contact_email, contact_phone, discovered_emails, discovered_phones, outreach_subject, outreach_draft, created_at, converted_company_id, converted_opportunity_id")
+      .select(
+        "id, company_name, website, total_score, source_label, source_type, outreach_status, next_follow_up_at, contact_email, contact_phone, discovered_emails, discovered_phones, outreach_subject, outreach_draft, created_at, converted_company_id, converted_opportunity_id"
+      )
       .eq("account_id", accountId)
       .order("created_at", { ascending: false })
       .limit(300),
@@ -402,11 +405,6 @@ export default async function DashboardHome() {
     return new Date(c.created_at) >= new Date(thirtyDaysAgoIso);
   }).length;
 
-  const newContacts7d = contactRows.filter((c) => {
-    if (!c.created_at) return false;
-    return new Date(c.created_at) >= new Date(sevenDaysAgoIso);
-  }).length;
-
   const newCompanies30d = companyRows.filter((c) => {
     if (!c.created_at) return false;
     return new Date(c.created_at) >= new Date(thirtyDaysAgoIso);
@@ -468,42 +466,66 @@ export default async function DashboardHome() {
     .sort((a, b) => Number(b.total_score || 0) - Number(a.total_score || 0))
     .slice(0, 5);
 
-  const ceoInsights: string[] = [];
+  const executiveInsights: string[] = [];
 
   if (visitors30d > 0 && newContacts30d === 0) {
-    ceoInsights.push("Traffic is coming in, but 30-day lead capture is zero. Tighten your website conversion flow immediately.");
+    executiveInsights.push(
+      "Traffic is coming in, but 30-day lead capture is zero. Tighten your website conversion flow immediately."
+    );
   }
 
   if (contactConversion30d > 0 && contactConversion30d < 2) {
-    ceoInsights.push(`Visitor-to-lead conversion is only ${pct(contactConversion30d)} over 30 days. Marketing traffic is not converting strongly enough yet.`);
+    executiveInsights.push(
+      `Visitor-to-lead conversion is only ${pct(contactConversion30d)} over 30 days. Marketing traffic is not converting strongly enough yet.`
+    );
   }
 
   if (weightedPipeline > 0) {
-    ceoInsights.push(`Weighted pipeline is ${money(weightedPipeline)}. That is the more realistic near-term revenue view than raw pipeline alone.`);
+    executiveInsights.push(
+      `Weighted pipeline is ${money(weightedPipeline)}. That is the more realistic near-term revenue view than raw pipeline alone.`
+    );
   }
 
   if (closingThisMonth > 0) {
-    ceoInsights.push(`${money(closingThisMonth)} is currently scheduled to close this month. Push those deals hard before month-end.`);
+    executiveInsights.push(
+      `${money(closingThisMonth)} is currently scheduled to close this month. Push those deals hard before month-end.`
+    );
   }
 
   if (atRiskProjects > 0) {
-    ceoInsights.push(`${fmt(atRiskProjects)} project(s) are marked yellow/red. Delivery risk is creeping into the CEO lane.`);
+    executiveInsights.push(
+      `${fmt(atRiskProjects)} project(s) are marked yellow/red. Delivery risk is creeping into the executive lane.`
+    );
   }
 
   if (overdueTasks > 0) {
-    ceoInsights.push(`${fmt(overdueTasks)} overdue task(s) need attention. Execution drag will eventually affect client trust and revenue.`);
+    executiveInsights.push(
+      `${fmt(overdueTasks)} overdue task(s) need attention. Execution drag will eventually affect client trust and revenue.`
+    );
   }
 
   if (readyToEmail.length > 0) {
-    ceoInsights.push(`${fmt(readyToEmail.length)} lead(s) are contact-ready right now with contact info already found. Outreach can happen today.`);
+    executiveInsights.push(
+      `${fmt(readyToEmail.length)} lead(s) are contact-ready right now with contact info already found. Outreach can happen today.`
+    );
   }
 
   if (overdueFollowUps.length > 0) {
-    ceoInsights.push(`${fmt(overdueFollowUps.length)} follow-up(s) are already due. Revenue is likely sitting in the follow-up queue.`);
+    executiveInsights.push(
+      `${fmt(overdueFollowUps.length)} follow-up(s) are already due. Revenue is likely sitting in the follow-up queue.`
+    );
   }
 
-  if (!ceoInsights.length) {
-    ceoInsights.push("The business is showing healthy balance across traffic, sales, delivery, and execution. Keep pressure on consistency.");
+  if (newCompanies30d > 0) {
+    executiveInsights.push(
+      `${fmt(newCompanies30d)} company profile(s) were added in the last 30 days. Use them to sharpen targeting and account intelligence.`
+    );
+  }
+
+  if (!executiveInsights.length) {
+    executiveInsights.push(
+      "The business is showing healthy balance across traffic, sales, delivery, and execution. Keep pressure on consistency."
+    );
   }
 
   const tools = [
@@ -521,6 +543,7 @@ export default async function DashboardHome() {
   const adminTools = [
     { label: "Access Requests", href: "/admin/access-requests" },
     { label: "User Manager", href: "/admin/users" },
+    { label: "System Health", href: "/dashboard/reports/analytics" },
   ];
 
   return (
@@ -560,19 +583,24 @@ export default async function DashboardHome() {
         <div className="fw-card-strong p-7">
           <div className="text-xl font-semibold tracking-tight text-gray-900">Command Center</div>
           <div className="mt-1 text-sm text-gray-600">
-            Your executive shortcuts. Everything here is clickable.
+            Executive shortcuts for leadership focus, visibility, and action.
           </div>
 
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <CommandCard
               title="Weekly Executive Report"
-              desc="Auto-generated leadership report for focus and priorities."
+              desc="Executive briefing with pipeline, delivery, task pressure, and lead momentum."
               href="/dashboard/reports/weekly"
             />
             <CommandCard
-              title="Overdue Tasks"
-              desc="Clear blockers and overdue items fast."
-              href="/dashboard/reports/overdue"
+              title="Lead Generation"
+              desc="Source, qualify, enrich, and move leads into pipeline."
+              href="/dashboard/lead-generation"
+            />
+            <CommandCard
+              title="Company Profiles"
+              desc="Open company intelligence, linked records, and account context."
+              href="/dashboard/companies"
             />
             <CommandCard
               title="Pipeline Drilldown"
@@ -580,25 +608,27 @@ export default async function DashboardHome() {
               href="/dashboard/reports/pipeline"
             />
             <CommandCard
+              title="Overdue Tasks"
+              desc="Clear blockers and overdue items fast."
+              href="/dashboard/reports/overdue"
+            />
+            <CommandCard
               title="Project Health Heatmap"
               desc="Which projects are at risk right now."
               href="/dashboard/reports/projects-health"
             />
           </div>
-
-          <div className="mt-5 text-xs text-gray-500">
-            Freshware is now tracking lead sourcing, outreach readiness, and follow-up priority.
-          </div>
         </div>
       </section>
 
       <ToLeaveList />
+
       <CeoOverview />
 
       <section className="fw-card-strong p-7">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <div className="text-lg font-semibold text-gray-900">CEO Growth Dashboard</div>
+            <div className="text-lg font-semibold text-gray-900">Executive Growth Dashboard</div>
             <div className="mt-1 text-sm text-gray-600">
               Traffic, lead conversion, pipeline, revenue, delivery risk, and execution in one view.
             </div>
@@ -753,13 +783,13 @@ export default async function DashboardHome() {
         </div>
 
         <div className="mt-6 rounded-2xl border border-black/10 bg-white/70 p-6">
-          <div className="text-sm font-semibold text-gray-900">AI CEO Insights</div>
+          <div className="text-sm font-semibold text-gray-900">Executive Insights</div>
           <div className="mt-1 text-sm text-gray-600">
             Strategic highlights based on current Freshware and GA4 data.
           </div>
 
           <div className="mt-4 grid gap-3">
-            {ceoInsights.map((insight, index) => (
+            {executiveInsights.map((insight, index) => (
               <div key={index} className="rounded-2xl border border-black/10 bg-white p-4 text-sm text-gray-700">
                 {insight}
               </div>
@@ -856,94 +886,6 @@ export default async function DashboardHome() {
 
       <section className="fw-card-strong p-7">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-lg font-semibold text-gray-900">Executive Overview</div>
-            <div className="mt-1 text-sm text-gray-600">
-              Live metrics (Freshware DB plus external sources when connected).
-            </div>
-          </div>
-          <div className="text-xs text-gray-500">
-            Account scoped: <span className="font-semibold">{accountName}</span>
-          </div>
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Link href="/dashboard/reports/analytics" className="block">
-            <MetricCard
-              title="Site Visitors Today"
-              value={visitors ? fmt(visitorsToday) : "—"}
-              sub={visitors ? `7 days: ${fmt(visitors7d)}  30 days: ${fmt(visitors30d)}` : "7 days: —  30 days: —"}
-              note={visitors ? "GA4 activeUsers connected." : "GA4 not connected or env vars missing."}
-            />
-          </Link>
-
-          <Link href="/dashboard/meetings" className="block">
-            <MetricCard
-              title="Meetings Booked"
-              value={fmt(meetingsBooked)}
-              sub={`YCBM: ${fmt(ycbmBooked)}`}
-              note="Freshware meetings + optional YCBM."
-            />
-          </Link>
-
-          <Link href="/dashboard/opportunities" className="block">
-            <MetricCard
-              title="Prospects Open"
-              value={fmt(openOppCount)}
-              sub={`Open pipeline: ${money(openPipeline)}`}
-              note="Opportunities not won/lost."
-            />
-          </Link>
-
-          <Link href="/dashboard/projects" className="block">
-            <MetricCard
-              title="Active Projects"
-              value={fmt(activeProjects)}
-              sub={`Total projects: ${fmt(totalProjects)}`}
-              note="Status not done/closed/completed/cancelled."
-            />
-          </Link>
-
-          <Link href="/dashboard/opportunities" className="block">
-            <MetricCard
-              title="Total Opportunities"
-              value={fmt(totalOppCount)}
-              sub="Open + won + lost"
-              note="Account scoped."
-            />
-          </Link>
-
-          <Link href="/dashboard/tasks" className="block">
-            <MetricCard
-              title="Total Tasks"
-              value={fmt(totalTasks)}
-              sub="All tasks in account"
-              note="Account scoped."
-            />
-          </Link>
-
-          <Link href="/admin/users" className="block">
-            <MetricCard
-              title="Total Users"
-              value={fmt(totalUsers)}
-              sub="Users in this account"
-              note="Account scoped."
-            />
-          </Link>
-
-          <Link href="/dashboard/revenue" className="block">
-            <MetricCard
-              title="Revenue"
-              value={isAdmin ? money(revenueTotal) : "Restricted"}
-              sub={isAdmin ? "From revenue_entries" : "CEO/Admin only"}
-              note={isAdmin ? "Connected to revenue model." : "Only visible to CEO/Admin."}
-            />
-          </Link>
-        </div>
-      </section>
-
-      <section className="fw-card-strong p-7">
-        <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-lg font-semibold text-gray-900">My Assigned Tasks</div>
             <div className="mt-1 text-sm text-gray-600">

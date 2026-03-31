@@ -52,9 +52,14 @@ function parseCandidateLine(line: string) {
   const emailCandidate = parts.find((p) => p.includes("@")) || "";
   const phoneCandidate =
     parts.find((p) => /\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/.test(p)) || "";
-  const location = parts.find(
-    (p) => p !== websiteCandidate && p !== emailCandidate && p !== phoneCandidate && p !== companyName
-  ) || "";
+  const location =
+    parts.find(
+      (p) =>
+        p !== websiteCandidate &&
+        p !== emailCandidate &&
+        p !== phoneCandidate &&
+        p !== companyName
+    ) || "";
 
   return {
     company_name: companyName || "Unnamed Lead",
@@ -71,7 +76,7 @@ function parseBusinessListBlock(text: string) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .slice(0, 500);
+    .slice(0, 800);
 
   const grouped: string[] = [];
   let buffer: string[] = [];
@@ -102,6 +107,7 @@ function parseBusinessListBlock(text: string) {
       const emailMatch = entry.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
       const phoneMatch = entry.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
       const pieces = entry.split("|").map((v) => v.trim()).filter(Boolean);
+
       const companyName =
         pieces.find(
           (p) =>
@@ -235,6 +241,61 @@ function parseJsonFromResponse(data: any): string {
   return parts.join("\n").trim();
 }
 
+function buildFallbackLead(input: {
+  companyName: string;
+  website: string | null;
+  geography: string;
+  industries: string;
+  serviceFocus: string;
+  notes: string;
+  mode: string;
+}) {
+  const website = input.website || "";
+  const service = input.serviceFocus || "consulting";
+
+  let detectedNeed = "Technology strategy and growth support";
+  let recommendedService = service;
+  let fitScore = 60;
+  let needScore = 60;
+  let urgencyScore = 55;
+  let accessScore = website ? 72 : 42;
+
+  if (website) {
+    fitScore += 8;
+    urgencyScore += 6;
+  }
+
+  if ((input.notes || "").toLowerCase().includes("automation")) {
+    detectedNeed = "Workflow automation and operational efficiency";
+    recommendedService = "ai";
+    needScore = 78;
+  } else if ((input.notes || "").toLowerCase().includes("mobile")) {
+    detectedNeed = "Mobile customer experience and engagement";
+    recommendedService = "mobile_app";
+    needScore = 75;
+  } else if ((input.notes || "").toLowerCase().includes("website")) {
+    detectedNeed = "Website modernization and stronger conversion flow";
+    recommendedService = "website";
+    needScore = 74;
+  }
+
+  const totalScore = Math.round((fitScore + needScore + urgencyScore + accessScore) / 4);
+
+  return {
+    detected_need: detectedNeed,
+    recommended_service_line: recommendedService,
+    fit_score: fitScore,
+    need_score: needScore,
+    urgency_score: urgencyScore,
+    access_score: accessScore,
+    total_score: totalScore,
+    ai_summary: `${input.companyName} appears to be a reasonable lead for ${titleCaseService(recommendedService)} support.`,
+    ai_reasoning: `Generated from Freshware ${input.mode} mode using available targeting inputs.`,
+    outreach_angle: `Lead with business value around ${detectedNeed.toLowerCase()}.`,
+    first_touch_message: `Hi, I came across ${input.companyName} and noticed what looks like an opportunity around ${detectedNeed.toLowerCase()}. My team helps businesses improve growth, efficiency, and customer experience through practical ${titleCaseService(recommendedService)} support. Would you be open to a quick conversation to see if there is a fit?`,
+  };
+}
+
 async function analyzeSpecificCompanyWithOpenAI(input: {
   companyName: string;
   website: string | null;
@@ -285,11 +346,11 @@ ${JSON.stringify(input, null, 2)}
   const data = await response.json().catch(() => null);
   if (!data) return null;
 
-  const outputText = parseJsonFromResponse(data);
-  if (!outputText.trim()) return null;
+  const text = parseJsonFromResponse(data);
+  if (!text) return null;
 
   try {
-    return JSON.parse(outputText);
+    return JSON.parse(text);
   } catch {
     return null;
   }
@@ -361,50 +422,6 @@ ${JSON.stringify(input, null, 2)}
   } catch {
     return null;
   }
-}
-
-function buildFallbackLead(input: {
-  companyName: string;
-  website: string | null;
-  geography: string;
-  industries: string;
-  serviceFocus: string;
-  notes: string;
-  mode: string;
-}) {
-  const recommendedService = safeText(input.serviceFocus) || "consulting";
-  const likelyNeed =
-    recommendedService === "website"
-      ? "Website modernization and stronger conversion flow"
-      : recommendedService === "software"
-      ? "Workflow automation and internal system improvement"
-      : recommendedService === "ai"
-      ? "AI enablement and process intelligence"
-      : recommendedService === "mobile_app"
-      ? "Mobile app experience or expansion"
-      : recommendedService === "support"
-      ? "Platform support and optimization"
-      : "Business and technology consulting";
-
-  const fit = input.mode === "specific_company" ? 82 : input.mode === "business_lists" ? 74 : 68;
-  const need = input.website ? 72 : 58;
-  const urgency = input.notes ? 70 : 55;
-  const access = input.website ? 64 : 48;
-  const total = Math.round((fit + need + urgency + access) / 4);
-
-  return {
-    detected_need: likelyNeed,
-    recommended_service_line: recommendedService,
-    fit_score: fit,
-    need_score: need,
-    urgency_score: urgency,
-    access_score: access,
-    total_score: total,
-    ai_summary: `${input.companyName} looks like a strong candidate for ${titleCaseService(recommendedService)} support based on the current targeting inputs.`,
-    ai_reasoning: `This lead was created through ${input.mode.replace(/_/g, " ")} with geography "${input.geography || "not specified"}" and industries "${input.industries || "not specified"}".`,
-    outreach_angle: `Lead with business outcomes tied to ${likelyNeed.toLowerCase()}.`,
-    first_touch_message: `Hi, I came across ${input.companyName} and noticed a possible opportunity to improve how your digital experience supports growth. We help businesses streamline that without overcomplicating the process.`,
-  };
 }
 
 function fallbackWebsiteAnalysis(input: {
@@ -487,46 +504,51 @@ export async function POST(req: Request) {
   const { supabase, user, profile } = await requireViewer();
 
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!profile?.account_id) return NextResponse.json({ error: "Missing account assignment" }, { status: 400 });
+  if (!profile || !profile.account_id) {
+    return NextResponse.json({ error: "Missing account assignment" }, { status: 400 });
+  }
   if (!isStaff(profile.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-  const accountId = profile.account_id;
 
   try {
     const body = await req.json().catch(() => ({}));
 
-    const mode = safeText(body?.mode) || "icp";
-    const serviceFocus = safeText(body?.serviceFocus);
+    const modeRaw = safeText(body?.mode);
+    const mode = (modeRaw || "ideal_customer") as string;
     const geography = safeText(body?.geography);
     const industries = safeText(body?.industries);
+    const serviceFocus = safeText(body?.serviceFocus) || "consulting";
+    const notes = safeText(body?.notes);
     const companySizes = safeText(body?.companySizes);
     const buyerTitles = safeText(body?.buyerTitles);
-    const notes = safeText(body?.notes);
     const candidateInput = safeText(body?.candidateInput);
-    const specificCompanyName = safeText(body?.specificCompanyName);
-    const specificCompanyWebsite = safeText(body?.specificCompanyWebsite);
     const sourceLabelInput = safeText(body?.sourceLabel);
     const sourceUrlInput = safeText(body?.sourceUrl);
+    const limit = Math.max(1, Math.min(100, Number(body?.limit || 25)));
 
-    let rows: any[] = [];
+    const accountId = profile.account_id;
+
+    let rows: Record<string, any>[] = [];
 
     if (mode === "specific_company") {
-      const companyName = specificCompanyName || parseCandidateLine(candidateInput).company_name;
-      const website = normalizeWebsite(specificCompanyWebsite) || parseCandidateLine(candidateInput).website;
+      const companyName = safeText(body?.companyName);
+      const website = normalizeWebsite(body?.website);
 
-      if (!companyName) {
-        return NextResponse.json({ error: "Missing company name" }, { status: 400 });
+      if (!companyName && !website) {
+        return NextResponse.json(
+          { error: "Enter an exact company name or website." },
+          { status: 400 }
+        );
       }
 
       const baseAI =
         (await analyzeSpecificCompanyWithOpenAI({
-          companyName,
+          companyName: companyName || website || "Unnamed Lead",
           website,
           serviceFocus,
           notes,
         })) ||
         buildFallbackLead({
-          companyName,
+          companyName: companyName || website || "Unnamed Lead",
           website,
           geography,
           industries,
@@ -548,14 +570,14 @@ export async function POST(req: Request) {
 
         const websiteAI =
           (await analyzeWebsiteWithOpenAI({
-            companyName,
+            companyName: companyName || website,
             website,
             websiteText: fetched.text,
             currentNeed: baseAI.detected_need || null,
             currentService: baseAI.recommended_service_line || null,
           })) ||
           fallbackWebsiteAnalysis({
-            companyName,
+            companyName: companyName || website,
             website,
             signals,
           });
@@ -563,7 +585,8 @@ export async function POST(req: Request) {
         enriched = {
           ...baseAI,
           detected_need: websiteAI.detected_need || baseAI.detected_need,
-          recommended_service_line: websiteAI.recommended_service_line || baseAI.recommended_service_line,
+          recommended_service_line:
+            websiteAI.recommended_service_line || baseAI.recommended_service_line,
           fit_score: Number(websiteAI.fit_score ?? baseAI.fit_score ?? 0),
           need_score: Number(websiteAI.need_score ?? baseAI.need_score ?? 0),
           urgency_score: Number(websiteAI.urgency_score ?? baseAI.urgency_score ?? 0),
@@ -572,7 +595,8 @@ export async function POST(req: Request) {
           ai_summary: websiteAI.ai_summary || baseAI.ai_summary,
           ai_reasoning: websiteAI.ai_reasoning || baseAI.ai_reasoning,
           outreach_angle: websiteAI.outreach_angle || baseAI.outreach_angle,
-          first_touch_message: websiteAI.first_touch_message || baseAI.first_touch_message,
+          first_touch_message:
+            websiteAI.first_touch_message || baseAI.first_touch_message,
           website_analysis: {
             ...(websiteAI.website_analysis || {}),
             fetch_ok: fetched.ok,
@@ -588,7 +612,7 @@ export async function POST(req: Request) {
       rows = [
         {
           account_id: accountId,
-          company_name: companyName,
+          company_name: companyName || website || "Unnamed Lead",
           website,
           industry: industries || null,
           city: geography || null,
@@ -600,7 +624,8 @@ export async function POST(req: Request) {
           source_snapshot: [companyName, website, notes].filter(Boolean).join(" | "),
           generation_mode: mode,
           detected_need: enriched.detected_need || null,
-          recommended_service_line: enriched.recommended_service_line || serviceFocus || "consulting",
+          recommended_service_line:
+            enriched.recommended_service_line || serviceFocus || "consulting",
           fit_score: Number(enriched.fit_score ?? 0),
           need_score: Number(enriched.need_score ?? 0),
           urgency_score: Number(enriched.urgency_score ?? 0),
@@ -628,7 +653,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Add at least one business listing block." }, { status: 400 });
       }
 
-      rows = parsedRows.map((row) => {
+      rows = parsedRows.slice(0, limit).map((row) => {
         const ai = buildFallbackLead({
           companyName: row.company_name,
           website: row.website,
@@ -655,7 +680,8 @@ export async function POST(req: Request) {
           source_snapshot: row.raw,
           generation_mode: mode,
           detected_need: ai.detected_need || null,
-          recommended_service_line: ai.recommended_service_line || serviceFocus || "consulting",
+          recommended_service_line:
+            ai.recommended_service_line || serviceFocus || "consulting",
           fit_score: Number(ai.fit_score ?? 0),
           need_score: Number(ai.need_score ?? 0),
           urgency_score: Number(ai.urgency_score ?? 0),
@@ -671,25 +697,20 @@ export async function POST(req: Request) {
           status: "new",
           tags: ["business_list", sourceLabelInput || "directory"],
           parse_confidence: row.parse_confidence,
-          notes: notes || null,
         };
       });
     } else {
-      const lines = candidateInput
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .slice(0, 200);
+      const syntheticRows = Array.from({ length: limit }).map((_, idx) => {
+        const baseName =
+          mode === "similar_to_company"
+            ? `Benchmark-Match Company ${idx + 1}`
+            : mode === "likely_needs"
+            ? `Likely Need Prospect ${idx + 1}`
+            : `Ideal Customer Prospect ${idx + 1}`;
 
-      if (!lines.length) {
-        return NextResponse.json({ error: "Add at least one candidate company or website." }, { status: 400 });
-      }
-
-      rows = lines.map((line) => {
-        const parsed = parseCandidateLine(line);
         const ai = buildFallbackLead({
-          companyName: parsed.company_name,
-          website: parsed.website,
+          companyName: baseName,
+          website: null,
           geography,
           industries,
           serviceFocus,
@@ -699,26 +720,35 @@ export async function POST(req: Request) {
 
         return {
           account_id: accountId,
-          company_name: parsed.company_name,
-          website: parsed.website,
-          contact_email: parsed.email,
-          contact_phone: parsed.phone,
+          company_name: baseName,
+          website: null,
+          contact_email: null,
+          contact_phone: null,
           industry: industries || null,
           city: geography || null,
           state: null,
           source: mode,
           source_type: "manual",
           source_label:
-            mode === "lookalike"
+            mode === "similar_to_company"
               ? "Lookalike Search"
-              : mode === "needs_based"
+              : mode === "likely_needs"
               ? "Likely Needs Search"
               : "Ideal Customer Search",
           source_url: null,
-          source_snapshot: parsed.raw,
+          source_snapshot: [
+            geography ? `Geography: ${geography}` : null,
+            industries ? `Industries: ${industries}` : null,
+            companySizes ? `Company size: ${companySizes}` : null,
+            buyerTitles ? `Buyer titles: ${buyerTitles}` : null,
+            notes || null,
+          ]
+            .filter(Boolean)
+            .join(" | "),
           generation_mode: mode,
           detected_need: ai.detected_need || null,
-          recommended_service_line: ai.recommended_service_line || serviceFocus || "consulting",
+          recommended_service_line:
+            ai.recommended_service_line || serviceFocus || "consulting",
           fit_score: Number(ai.fit_score ?? 0),
           need_score: Number(ai.need_score ?? 0),
           urgency_score: Number(ai.urgency_score ?? 0),
@@ -729,20 +759,15 @@ export async function POST(req: Request) {
           ai_reasoning: ai.ai_reasoning || null,
           outreach_angle: ai.outreach_angle || null,
           first_touch_message: ai.first_touch_message || null,
-          raw_import_row: parsed.raw,
+          raw_import_row: null,
           created_by: user.id,
           status: "new",
           tags: [mode],
-          parse_confidence: parsed.website || parsed.email || parsed.phone ? 0.8 : 0.65,
-          notes: [
-            notes || null,
-            companySizes ? `Company size: ${companySizes}` : null,
-            buyerTitles ? `Buyer titles: ${buyerTitles}` : null,
-          ]
-            .filter(Boolean)
-            .join(" | "),
+          parse_confidence: 0.55,
         };
       });
+
+      rows = syntheticRows;
     }
 
     const { data, error } = await supabase

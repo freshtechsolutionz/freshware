@@ -16,10 +16,54 @@ type Overview = {
   };
   pipelineByStage: Array<{ stage: string; count: number; amount: number }>;
   revenueTrend: Array<{ month: string; amount: number }>;
+  ceoMondaySummary?: {
+    generated_at?: string;
+    kpis?: Record<string, number>;
+    stage_breakdown?: Array<{
+      stage: string;
+      opp_count: number;
+      pipeline_amount: number;
+      weighted_pipeline_amount: number;
+      avg_days_open: number;
+      avg_days_since_activity: number;
+    }>;
+    stuck_deals?: Array<{
+      opportunity_id: string;
+      opportunity_name: string | null;
+      stage: string | null;
+      amount: number | null;
+      weighted_amount: number | null;
+      days_since_activity: number | null;
+      close_date: string | null;
+      next_step: string | null;
+    }>;
+    upcoming_closes?: Array<{
+      opportunity_id: string;
+      opportunity_name: string | null;
+      stage: string | null;
+      weighted_amount: number | null;
+      close_date: string | null;
+      days_since_activity: number | null;
+    }>;
+    enterprise_blockers?: Array<{
+      opportunity_id: string;
+      opportunity_name: string | null;
+      stage: string | null;
+      weighted_amount: number | null;
+      missing_budget?: boolean;
+      missing_timeline?: boolean;
+      missing_decision_maker?: boolean;
+      days_since_activity?: number | null;
+    }>;
+  } | null;
 };
 
 function fmtMoney(n: number) {
   return "$" + new Intl.NumberFormat().format(Math.round(n || 0));
+}
+
+function fmtNum(n: number) {
+  return new Intl.NumberFormat().format(Math.round(n || 0));
 }
 
 function cls(...s: Array<string | false | null | undefined>) {
@@ -39,15 +83,13 @@ export default function CeoOverview() {
       const ct = res.headers.get("content-type") || "";
       if (!ct.toLowerCase().includes("application/json")) {
         const txt = await res.text();
-        throw new Error(
-          `Non-JSON response (${res.status}): ${txt.slice(0, 120)}`
-        );
+        throw new Error(`Non-JSON response (${res.status}): ${txt.slice(0, 120)}`);
       }
       const json = await res.json();
       if (json?.error) throw new Error(json.error);
       setData(json);
     } catch (e: any) {
-      setErr(e?.message || "Failed to load CEO overview");
+      setErr(e?.message || "Failed to load executive overview");
     } finally {
       setLoading(false);
     }
@@ -58,15 +100,39 @@ export default function CeoOverview() {
   }, []);
 
   const pipelineTop = useMemo(
-    () => (data?.pipelineByStage || []).slice(0, 6),
+    () => (data?.ceoMondaySummary?.stage_breakdown?.length
+      ? data.ceoMondaySummary.stage_breakdown.slice(0, 6).map((x) => ({
+          stage: x.stage,
+          count: x.opp_count,
+          amount: Number(x.weighted_pipeline_amount || x.pipeline_amount || 0),
+        }))
+      : (data?.pipelineByStage || []).slice(0, 6)),
     [data]
   );
+
   const revenue = useMemo(() => data?.revenueTrend || [], [data]);
+
+  const stuckDeals = useMemo(
+    () => data?.ceoMondaySummary?.stuck_deals?.slice(0, 5) || [],
+    [data]
+  );
+
+  const enterpriseBlockers = useMemo(
+    () => data?.ceoMondaySummary?.enterprise_blockers?.slice(0, 5) || [],
+    [data]
+  );
+
+  const upcomingCloses = useMemo(
+    () => data?.ceoMondaySummary?.upcoming_closes?.slice(0, 5) || [],
+    [data]
+  );
+
+  const kpiSummary = data?.ceoMondaySummary?.kpis || null;
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="CEO Overview"
+        title="Executive Overview"
         subtitle={
           loading
             ? "Loading live metrics..."
@@ -76,16 +142,16 @@ export default function CeoOverview() {
         }
         actions={
           <>
+            <Link href="/dashboard/reports/weekly" className="fw-btn text-sm">
+              Weekly Report
+            </Link>
             <Link href="/dashboard/reports/pipeline" className="fw-btn text-sm">
               Pipeline
             </Link>
             <Link href="/dashboard/reports/overdue" className="fw-btn text-sm">
               Overdue
             </Link>
-            <Link
-              href="/dashboard/reports/projects-health"
-              className="fw-btn text-sm"
-            >
+            <Link href="/dashboard/reports/projects-health" className="fw-btn text-sm">
               Project Health
             </Link>
             <button type="button" onClick={load} className="fw-btn text-sm">
@@ -102,7 +168,6 @@ export default function CeoOverview() {
         </div>
       ) : null}
 
-      {/* KPI Grid */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Link href="/dashboard/reports/pipeline" className="block">
           <KpiCard
@@ -138,12 +203,67 @@ export default function CeoOverview() {
         </Link>
       </div>
 
-      {/* Charts */}
+      {kpiSummary ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Panel title="Executive Pipeline" meta="CEO SQL intelligence layer">
+            <div className="space-y-3 text-sm text-zinc-700">
+              <SummaryRow label="All pipeline" value={fmtMoney(Number(kpiSummary.pipeline_amount_all || 0))} />
+              <SummaryRow label="Weighted pipeline" value={fmtMoney(Number(kpiSummary.weighted_pipeline_all || 0))} />
+              <SummaryRow label="Enterprise pipeline" value={fmtMoney(Number(kpiSummary.pipeline_amount_enterprise || 0))} />
+              <SummaryRow label="Avg deal size" value={fmtMoney(Number(kpiSummary.avg_deal_size_all || 0))} />
+            </div>
+          </Panel>
+
+          <Panel title="Enterprise Focus" meta="Larger strategic opportunities">
+            <div className="space-y-3 text-sm text-zinc-700">
+              <SummaryRow label="Enterprise deals" value={fmtNum(Number(kpiSummary.opp_count_enterprise || 0))} />
+              <SummaryRow label="Enterprise weighted" value={fmtMoney(Number(kpiSummary.weighted_pipeline_enterprise || 0))} />
+              <SummaryRow label="Avg enterprise deal" value={fmtMoney(Number(kpiSummary.avg_deal_size_enterprise || 0))} />
+              <SummaryRow label="Avg inactivity" value={`${fmtNum(Number(kpiSummary.avg_days_since_activity_enterprise || 0))} days`} />
+            </div>
+          </Panel>
+
+          <Panel title="Stuck Deals" meta="21+ days since activity">
+            {stuckDeals.length ? (
+              <div className="space-y-3">
+                {stuckDeals.map((deal) => (
+                  <MiniDealRow
+                    key={deal.opportunity_id}
+                    title={deal.opportunity_name || "Unnamed deal"}
+                    meta={`${deal.stage || "Unstaged"} • ${deal.days_since_activity ?? "—"} days idle`}
+                    value={fmtMoney(Number(deal.weighted_amount || deal.amount || 0))}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptySmall text="No stuck deals right now." />
+            )}
+          </Panel>
+
+          <Panel title="Upcoming Closes" meta="Deals closing soon">
+            {upcomingCloses.length ? (
+              <div className="space-y-3">
+                {upcomingCloses.map((deal) => (
+                  <MiniDealRow
+                    key={deal.opportunity_id}
+                    title={deal.opportunity_name || "Unnamed deal"}
+                    meta={`${deal.stage || "Unstaged"} • ${deal.close_date || "No close date"}`}
+                    value={fmtMoney(Number(deal.weighted_amount || 0))}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptySmall text="No upcoming closes found." />
+            )}
+          </Panel>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Link href="/dashboard/reports/pipeline" className="block">
           <Panel
             title="Pipeline by Stage"
-            meta="Top 6 by amount (click to drill down)"
+            meta="Top stages by weighted value"
           >
             {data ? (
               <BarChart
@@ -171,24 +291,56 @@ export default function CeoOverview() {
         </Panel>
       </div>
 
-      {/* Quick next actions */}
-      <div className="fw-card p-6">
-        <div className="text-sm font-semibold text-zinc-900">
-          CEO focus hints
-        </div>
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          <Link href="/dashboard/reports/overdue" className="fw-btn text-sm">
-            Clear overdue tasks
-          </Link>
-          <Link href="/dashboard/reports/pipeline" className="fw-btn text-sm">
-            Push top-stage deals
-          </Link>
-          <Link
-            href="/dashboard/reports/projects-health"
-            className="fw-btn text-sm"
-          >
-            Fix red projects
-          </Link>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Panel title="Enterprise Blockers" meta="Missing budget, timeline, or decision maker">
+          {enterpriseBlockers.length ? (
+            <div className="space-y-3">
+              {enterpriseBlockers.map((deal) => {
+                const blockers = [
+                  deal.missing_budget ? "budget" : null,
+                  deal.missing_timeline ? "timeline" : null,
+                  deal.missing_decision_maker ? "decision maker" : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ");
+
+                return (
+                  <MiniDealRow
+                    key={deal.opportunity_id}
+                    title={deal.opportunity_name || "Unnamed deal"}
+                    meta={`${deal.stage || "Unstaged"} • Missing ${blockers || "core info"}`}
+                    value={fmtMoney(Number(deal.weighted_amount || 0))}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <EmptySmall text="No enterprise blockers surfaced right now." />
+          )}
+        </Panel>
+
+        <div className="fw-card p-6">
+          <div className="text-sm font-semibold text-zinc-900">Executive focus hints</div>
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <Link href="/dashboard/reports/overdue" className="fw-btn text-sm">
+              Clear overdue tasks
+            </Link>
+            <Link href="/dashboard/reports/pipeline" className="fw-btn text-sm">
+              Push top-stage deals
+            </Link>
+            <Link href="/dashboard/reports/projects-health" className="fw-btn text-sm">
+              Fix red projects
+            </Link>
+            <Link href="/dashboard/lead-generation" className="fw-btn text-sm">
+              Work follow-up queue
+            </Link>
+            <Link href="/dashboard/companies" className="fw-btn text-sm">
+              Review company profiles
+            </Link>
+            <Link href="/dashboard/reports/weekly" className="fw-btn text-sm">
+              Open weekly briefing
+            </Link>
+          </div>
         </div>
       </div>
     </div>
@@ -264,6 +416,33 @@ function Panel(props: {
       <div className="mt-4">{props.children}</div>
     </div>
   );
+}
+
+function SummaryRow(props: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span>{props.label}</span>
+      <span className="font-semibold text-zinc-900">{props.value}</span>
+    </div>
+  );
+}
+
+function MiniDealRow(props: { title: string; meta: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-black/10 bg-white/80 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-zinc-900">{props.title}</div>
+          <div className="mt-1 text-xs text-zinc-600">{props.meta}</div>
+        </div>
+        <div className="shrink-0 text-sm font-semibold text-zinc-900">{props.value}</div>
+      </div>
+    </div>
+  );
+}
+
+function EmptySmall(props: { text: string }) {
+  return <div className="text-sm text-zinc-500">{props.text}</div>;
 }
 
 function Skeleton() {

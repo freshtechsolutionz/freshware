@@ -88,10 +88,6 @@ function safeStatus(input: any) {
   return allowed.has(s) ? s : "New";
 }
 
-/**
- * Convert "Friday 2pm CST" into UTC ISO using America/Chicago.
- * If parsing fails, return null (due date optional).
- */
 function parseChicagoDueAt(text: string): string | null {
   const raw = (text || "").toLowerCase();
   const hasFriday = raw.includes("friday");
@@ -129,14 +125,13 @@ function parseChicagoDueAt(text: string): string | null {
   const todayIdx = weekdayIndex[weekday] ?? null;
   if (todayIdx === null) return null;
 
-  const targetIdx = 5; // Fri
+  const targetIdx = 5;
   let delta = targetIdx - todayIdx;
   if (delta < 0) delta += 7;
   if (delta === 0) delta = 7;
 
   const intendedUtc = new Date(Date.UTC(yyyy, mm - 1, dd + delta, hour24, minRaw, 0));
 
-  // DST-safe correction
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
     hour: "2-digit",
@@ -314,10 +309,6 @@ async function insertTaskWithAutoAttach(params: {
   return { ok: false as const, error: err2 };
 }
 
-/* -----------------------------
-   “REAL ANSWERS” (no presets)
--------------------------------- */
-
 function isQuestionAboutPipeline(t: string) {
   const s = t.toLowerCase();
   return s.includes("pipeline") || s.includes("opportunit") || s.includes("deals");
@@ -337,6 +328,18 @@ function isQuestionAboutMeetings(t: string) {
 function isFocusQuestion(t: string) {
   const s = t.toLowerCase();
   return s.includes("focus") || s.includes("today") || s.includes("what should i do") || s.includes("priorit");
+}
+function isQuestionAboutStuckDeals(t: string) {
+  const s = t.toLowerCase();
+  return s.includes("stuck deals") || s.includes("stalled deals") || s.includes("idle deals");
+}
+function isQuestionAboutEnterpriseBlockers(t: string) {
+  const s = t.toLowerCase();
+  return s.includes("enterprise blocker") || s.includes("enterprise deals are blocked") || s.includes("missing decision maker") || s.includes("missing budget") || s.includes("missing timeline");
+}
+function isQuestionAboutLeadFlow(t: string) {
+  const s = t.toLowerCase();
+  return s.includes("lead") || s.includes("follow-up") || s.includes("follow up") || s.includes("outreach");
 }
 
 function money(n: number) {
@@ -456,10 +459,10 @@ async function fetchMeetingsSummary(supabase: any, accountId: string, range: "to
 
   let since = new Date(start);
   if (range === "today") {
-    // keep since today 00:00
+    // keep since today
   } else if (range === "week") {
-    const day = start.getDay(); // 0 Sun
-    const mondayDelta = (day === 0 ? -6 : 1 - day);
+    const day = start.getDay();
+    const mondayDelta = day === 0 ? -6 : 1 - day;
     since.setDate(start.getDate() + mondayDelta);
   } else if (range === "7") {
     since.setDate(start.getDate() - 6);
@@ -490,6 +493,64 @@ async function fetchMeetingsSummary(supabase: any, accountId: string, range: "to
   };
 }
 
+async function fetchLeadDigest(supabase: any, accountId: string) {
+  const { data, error } = await supabase
+    .from("lead_prospects")
+    .select("status, outreach_status, next_follow_up_at, total_score")
+    .eq("account_id", accountId);
+
+  if (error) return { ok: false as const, error: error.message };
+
+  const rows = (data || []) as any[];
+  return {
+    ok: true as const,
+    total: rows.length,
+    newLeads: rows.filter((l) => String(l.status || "").toUpperCase() === "NEW").length,
+    responded: rows.filter((l) => String(l.outreach_status || "").toUpperCase() === "RESPONDED").length,
+    followUpDue: rows.filter((l) => {
+      if (!l.next_follow_up_at) return false;
+      const d = new Date(l.next_follow_up_at);
+      return !Number.isNaN(d.getTime()) && d.getTime() <= Date.now();
+    }).length,
+    highScore: rows.filter((l) => Number(l.total_score || 0) >= 80).length,
+  };
+}
+
+async function fetchCeoMondaySummary(accountId: string) {
+  const svc = svcSupabase();
+  if (!svc) return { ok: false as const, error: "Missing SUPABASE_SERVICE_ROLE_KEY (server env)" };
+
+  const { data: oppIds, error: idErr } = await svc
+    .from("opportunities")
+    .select("id")
+    .eq("account_id", accountId);
+
+  if (idErr) return { ok: false as const, error: idErr.message };
+
+  const idSet = new Set((oppIds || []).map((r: any) => r.id));
+
+  const { data, error } = await svc.rpc("ceo_monday_summary");
+  if (error) return { ok: false as const, error: error.message };
+
+  const cleanArray = (value: any[]) =>
+    Array.isArray(value) ? value.filter((row) => !row?.opportunity_id || idSet.has(row.opportunity_id)) : [];
+
+  const cleanStageBreakdown = Array.isArray(data?.stage_breakdown) ? data.stage_breakdown : [];
+  const cleanKpis = data?.kpis || {};
+
+  return {
+    ok: true as const,
+    summary: {
+      generated_at: data?.generated_at || new Date().toISOString(),
+      kpis: cleanKpis,
+      stage_breakdown: cleanStageBreakdown,
+      stuck_deals: cleanArray(data?.stuck_deals || []),
+      upcoming_closes: cleanArray(data?.upcoming_closes || []),
+      enterprise_blockers: cleanArray(data?.enterprise_blockers || []),
+    },
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as AgentRequest;
@@ -502,12 +563,12 @@ export async function POST(req: Request) {
     }
 
     const { user, profile, supabase } = viewer;
-    if (!profile.account_id) return NextResponse.json({ reply: "Your profile is missing account_id." }, { status: 200 });
+    if (!profile.account_id) {
+      return NextResponse.json({ reply: "Your profile is missing account_id." }, { status: 200 });
+    }
 
-    // Staff-only actions
     const staff = isStaff(profile.role);
 
-    // 1) Task creation intent
     const intent = parseCreateTaskIntent(raw);
     if (intent) {
       if (!staff) {
@@ -543,19 +604,23 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2) Answer real questions (no preset-only behavior)
     const accountId = profile.account_id;
 
-    // Focus “daily brief”
     if (isFocusQuestion(raw)) {
-      const [o, p, pr] = await Promise.all([
+      const [o, p, pr, leads, monday] = await Promise.all([
         fetchOverdueSummary(supabase, accountId),
         fetchPipelineSummary(supabase, accountId, 30),
         fetchProjectHealthSummary(supabase, accountId),
+        fetchLeadDigest(supabase, accountId),
+        fetchCeoMondaySummary(accountId),
       ]);
 
       const lines: string[] = [];
-      lines.push("Here’s your focus for today:");
+      lines.push("Here’s your executive focus for today:");
+
+      if (monday.ok && monday.summary.kpis) {
+        lines.push(`- Weighted pipeline: ${money(Number(monday.summary.kpis.weighted_pipeline_all || 0))}`);
+      }
 
       if (o.ok) {
         lines.push(`- Overdue tasks: ${o.overdue} (Blocked: ${o.blocked})`);
@@ -577,21 +642,114 @@ export async function POST(req: Request) {
         lines.push(`- Pipeline: error (${p.error})`);
       }
 
+      if (leads.ok) {
+        lines.push(`- Leads needing action: ${leads.followUpDue} follow-ups due, ${leads.highScore} high-score leads`);
+      }
+
+      if (monday.ok && monday.summary.stuck_deals?.length) {
+        const topStuck = monday.summary.stuck_deals
+          .slice(0, 3)
+          .map((d: any) => `${d.opportunity_name || "Unnamed"} (${d.days_since_activity || 0}d idle)`)
+          .join(", ");
+        lines.push(`- Stuck deals: ${topStuck}`);
+      }
+
       lines.push("");
-      lines.push("If you want, tell me: “Create a task: Clear top 3 overdue items (under Admin) due Friday 2pm CST”");
+      lines.push("If you want, tell me:");
+      lines.push(`“Create a task: Clear top 3 overdue items (under Admin) due Friday 2pm CST”`);
 
       return NextResponse.json({ reply: lines.join("\n") }, { status: 200 });
     }
 
-    // Pipeline Q
+    if (isQuestionAboutStuckDeals(raw)) {
+      const monday = await fetchCeoMondaySummary(accountId);
+      if (!monday.ok) {
+        return NextResponse.json({ reply: `Stuck deals error: ${monday.error}` }, { status: 200 });
+      }
+
+      const rows = monday.summary.stuck_deals || [];
+      const lines: string[] = [];
+      lines.push(`Stuck deals: ${rows.length}`);
+      if (rows.length) {
+        lines.push("");
+        for (const deal of rows.slice(0, 10)) {
+          lines.push(
+            `- ${deal.opportunity_name || "Unnamed deal"} • ${deal.stage || "Unstaged"} • ${money(Number(deal.weighted_amount || deal.amount || 0))} • ${deal.days_since_activity || 0} days idle`
+          );
+        }
+      } else {
+        lines.push("No stuck deals surfaced right now.");
+      }
+      lines.push("");
+      lines.push("Open the drilldown: /dashboard/reports/weekly");
+      return NextResponse.json({ reply: lines.join("\n") }, { status: 200 });
+    }
+
+    if (isQuestionAboutEnterpriseBlockers(raw)) {
+      const monday = await fetchCeoMondaySummary(accountId);
+      if (!monday.ok) {
+        return NextResponse.json({ reply: `Enterprise blocker error: ${monday.error}` }, { status: 200 });
+      }
+
+      const rows = monday.summary.enterprise_blockers || [];
+      const lines: string[] = [];
+      lines.push(`Enterprise blockers: ${rows.length}`);
+      if (rows.length) {
+        lines.push("");
+        for (const deal of rows.slice(0, 10)) {
+          const blockers = [
+            deal.missing_budget ? "budget" : null,
+            deal.missing_timeline ? "timeline" : null,
+            deal.missing_decision_maker ? "decision maker" : null,
+          ]
+            .filter(Boolean)
+            .join(", ");
+          lines.push(
+            `- ${deal.opportunity_name || "Unnamed deal"} • ${money(Number(deal.weighted_amount || 0))} • missing ${blockers || "core info"}`
+          );
+        }
+      } else {
+        lines.push("No enterprise blockers surfaced right now.");
+      }
+      lines.push("");
+      lines.push("Open the weekly briefing: /dashboard/reports/weekly");
+      return NextResponse.json({ reply: lines.join("\n") }, { status: 200 });
+    }
+
+    if (isQuestionAboutLeadFlow(raw)) {
+      const leads = await fetchLeadDigest(supabase, accountId);
+      if (!leads.ok) {
+        return NextResponse.json({ reply: `Lead flow error: ${leads.error}` }, { status: 200 });
+      }
+
+      const lines: string[] = [];
+      lines.push("Lead flow:");
+      lines.push(`- Total leads: ${leads.total}`);
+      lines.push(`- New leads: ${leads.newLeads}`);
+      lines.push(`- High-score leads (80+): ${leads.highScore}`);
+      lines.push(`- Follow-ups due: ${leads.followUpDue}`);
+      lines.push(`- Responded outreach: ${leads.responded}`);
+      lines.push("");
+      lines.push("Best next move: work due follow-ups first, then high-score uncontacted leads.");
+      lines.push("Open lead generator: /dashboard/lead-generation");
+      return NextResponse.json({ reply: lines.join("\n") }, { status: 200 });
+    }
+
     if (isQuestionAboutPipeline(raw)) {
       const p = await fetchPipelineSummary(supabase, accountId, 30);
+      const monday = await fetchCeoMondaySummary(accountId);
+
       if (!p.ok) return NextResponse.json({ reply: `Pipeline error: ${p.error}` }, { status: 200 });
 
       const lines: string[] = [];
       lines.push(`Pipeline (last ${p.rangeDays} days):`);
       lines.push(`- Total opportunities created: ${p.total}`);
       lines.push(`- Open deals: ${p.openCount} totaling ${money(p.openTotal)}`);
+
+      if (monday.ok && monday.summary.kpis) {
+        lines.push(`- Weighted pipeline: ${money(Number(monday.summary.kpis.weighted_pipeline_all || 0))}`);
+      }
+
       if (p.topStages.length) {
         lines.push("");
         lines.push("Top stages by $:");
@@ -599,10 +757,10 @@ export async function POST(req: Request) {
           lines.push(`- ${s.stage}: ${s.count} deals, ${money(s.total)}`);
         }
       }
+
       return NextResponse.json({ reply: lines.join("\n") }, { status: 200 });
     }
 
-    // Overdue/Blocked Q
     if (isQuestionAboutOverdue(raw)) {
       const o = await fetchOverdueSummary(supabase, accountId);
       if (!o.ok) return NextResponse.json({ reply: `Overdue error: ${o.error}` }, { status: 200 });
@@ -622,7 +780,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ reply: lines.join("\n") }, { status: 200 });
     }
 
-    // Project health Q
     if (isQuestionAboutProjects(raw)) {
       const pr = await fetchProjectHealthSummary(supabase, accountId);
       if (!pr.ok) return NextResponse.json({ reply: `Project health error: ${pr.error}` }, { status: 200 });
@@ -641,9 +798,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ reply: lines.join("\n") }, { status: 200 });
     }
 
-    // Meetings Q
     if (isQuestionAboutMeetings(raw)) {
-      // default to last 7 days unless they say “today/week/30”
       const lower = raw.toLowerCase();
       const range: "today" | "week" | "7" | "30" =
         lower.includes("today") ? "today" :
@@ -670,16 +825,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ reply: lines.join("\n") }, { status: 200 });
     }
 
-    // Fallback answer (still useful, not “try:” only)
     return NextResponse.json(
       {
         reply:
-          "I can help with pipeline, projects health, overdue tasks, and meetings.\n\nTry:\n" +
+          "I can answer from Freshware across pipeline, stuck deals, enterprise blockers, projects health, meetings, tasks, and lead flow.\n\n" +
+          "Try:\n" +
+          "- What should I focus on today?\n" +
+          "- Show stuck deals\n" +
+          "- Which enterprise deals are blocked?\n" +
           "- Summarize pipeline\n" +
           "- Show overdue tasks\n" +
           "- Project health status\n" +
           "- Meetings booked last 7 days\n" +
-          "- What should I focus on today?\n\n" +
+          "- Lead flow\n\n" +
           "Or create an action:\n" +
           "- Create a task: Follow up with top 3 prospects (under Sales) due Friday 2pm CST",
       },
