@@ -40,7 +40,7 @@ export default function AdminHomePage() {
       const userId = auth.user?.id ?? null;
 
       if (!userId) {
-        router.replace("/login");
+        router.replace("/portal");
         return;
       }
 
@@ -129,8 +129,8 @@ export default function AdminHomePage() {
     },
     {
       title: "System Health",
-      desc: "Check analytics, executive reports, and launch-critical visibility.",
-      href: "/dashboard/reports/analytics",
+      desc: "See data quality, adoption, workflow risk, technical health, and email health in one place.",
+      href: "/dashboard/system-health",
       tag: "Launch",
     },
   ];
@@ -188,7 +188,7 @@ export default function AdminHomePage() {
               Use <span className="font-semibold">User Manager</span> for role corrections, invites, and account clean-up.
             </div>
             <div className="rounded-2xl border border-black/10 bg-gray-50 p-4 text-sm text-gray-700">
-              Use <span className="font-semibold">System Health</span> to spot reporting or visibility issues before clients see them.
+              Use <span className="font-semibold">System Health</span> to monitor data quality, adoption, stale deals, and launch risks.
             </div>
           </div>
         </div>

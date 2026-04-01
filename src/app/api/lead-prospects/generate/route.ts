@@ -3,6 +3,21 @@ import { requireViewer } from "@/lib/supabase/route";
 
 export const runtime = "nodejs";
 
+type SearchResult = {
+  title: string;
+  url: string;
+  snippet: string;
+  domain: string;
+  query: string;
+};
+
+type BenchmarkCompany = {
+  name?: string | null;
+  industry?: string | null;
+  city?: string | null;
+  state?: string | null;
+} | null;
+
 function isStaff(role: string | null | undefined) {
   const r = String(role || "").toUpperCase();
   return ["CEO", "ADMIN", "STAFF", "OPS", "SALES", "MARKETING"].includes(r);
@@ -10,6 +25,11 @@ function isStaff(role: string | null | undefined) {
 
 function safeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function toNullable(value: unknown) {
+  const v = safeText(value);
+  return v || null;
 }
 
 function normalizeWebsite(raw: string | null | undefined) {
@@ -41,34 +61,97 @@ function titleCaseService(service: string | null | undefined) {
     .join(" ");
 }
 
-function parseCandidateLine(line: string) {
-  const parts = line
-    .split("|")
-    .map((p) => p.trim())
+function splitList(value: string) {
+  return value
+    .split(/[,\n]/)
+    .map((v) => v.trim())
     .filter(Boolean);
+}
 
-  const companyName = parts[0] || "";
-  const websiteCandidate = parts.find((p) => /^https?:\/\//i.test(p) || p.includes(".")) || "";
-  const emailCandidate = parts.find((p) => p.includes("@")) || "";
-  const phoneCandidate =
-    parts.find((p) => /\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/.test(p)) || "";
-  const location =
-    parts.find(
-      (p) =>
-        p !== websiteCandidate &&
-        p !== emailCandidate &&
-        p !== phoneCandidate &&
-        p !== companyName
-    ) || "";
+function htmlDecode(input: string) {
+  return input
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#x2F;/g, "/")
+    .replace(/&#47;/g, "/");
+}
 
-  return {
-    company_name: companyName || "Unnamed Lead",
-    website: normalizeWebsite(websiteCandidate),
-    email: normalizeEmail(emailCandidate),
-    phone: normalizePhone(phoneCandidate),
-    location,
-    raw: line,
-  };
+function stripTags(input: string) {
+  return htmlDecode(input.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+}
+
+function getDomain(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isExcludedDomain(domain: string) {
+  const blocked = [
+    "linkedin.com",
+    "facebook.com",
+    "instagram.com",
+    "x.com",
+    "twitter.com",
+    "youtube.com",
+    "tiktok.com",
+    "yelp.com",
+    "yellowpages.com",
+    "mapquest.com",
+    "bbb.org",
+    "angi.com",
+    "manta.com",
+    "chamberofcommerce.com",
+    "opencorporates.com",
+    "zoominfo.com",
+    "rocketreach.co",
+    "indeed.com",
+    "glassdoor.com",
+    "duckduckgo.com",
+    "google.com",
+    "bing.com",
+  ];
+
+  return blocked.some((bad) => domain === bad || domain.endsWith(`.${bad}`));
+}
+
+function cleanCompanyName(title: string, domain: string) {
+  const base = stripTags(title)
+    .replace(/\s*\|\s*.*$/g, "")
+    .replace(/\s*-\s*.*$/g, "")
+    .trim();
+
+  if (base && base.length >= 3) return base;
+
+  const host = domain.replace(/^www\./, "");
+  const root = host.split(".")[0] || "Unnamed Company";
+  return root
+    .split(/[-_]/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function extractEmails(text: string) {
+  const matches = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  return Array.from(
+    new Set(
+      matches
+        .map((v) => normalizeEmail(v))
+        .filter((v): v is string => Boolean(v))
+        .filter((v) => !v.includes("example.com"))
+    )
+  ).slice(0, 8);
+}
+
+function extractPhones(text: string) {
+  const matches = text.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g) || [];
+  return Array.from(new Set(matches.map((v) => v.trim()))).slice(0, 8);
 }
 
 function parseBusinessListBlock(text: string) {
@@ -76,7 +159,7 @@ function parseBusinessListBlock(text: string) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .slice(0, 800);
+    .slice(0, 1200);
 
   const grouped: string[] = [];
   let buffer: string[] = [];
@@ -87,9 +170,7 @@ function parseBusinessListBlock(text: string) {
       /^https?:\/\//i.test(line) ||
       (line.length < 90 &&
         !line.includes("@") &&
-        !/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/.test(line) &&
-        !line.toLowerCase().startsWith("website") &&
-        !line.toLowerCase().startsWith("phone"));
+        !/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/.test(line));
 
     if (looksLikeNewBusiness && buffer.length) {
       grouped.push(buffer.join(" | "));
@@ -103,13 +184,15 @@ function parseBusinessListBlock(text: string) {
 
   return grouped
     .map((entry) => {
-      const websiteMatch = entry.match(/https?:\/\/[^\s|]+|(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s|]*)?/);
+      const websiteMatch = entry.match(
+        /https?:\/\/[^\s|]+|(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s|]*)?/i
+      );
       const emailMatch = entry.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
       const phoneMatch = entry.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
-      const pieces = entry.split("|").map((v) => v.trim()).filter(Boolean);
+      const parts = entry.split("|").map((v) => v.trim()).filter(Boolean);
 
       const companyName =
-        pieces.find(
+        parts.find(
           (p) =>
             p !== websiteMatch?.[0] &&
             p !== emailMatch?.[0] &&
@@ -117,19 +200,12 @@ function parseBusinessListBlock(text: string) {
             p.length > 2
         ) || "Unnamed Lead";
 
-      const remainder = pieces.filter((p) => p !== companyName);
-
       return {
         company_name: companyName,
         website: normalizeWebsite(websiteMatch?.[0] || null),
         email: normalizeEmail(emailMatch?.[0] || null),
         phone: normalizePhone(phoneMatch?.[0] || null),
-        location:
-          remainder.find(
-            (p) => p !== websiteMatch?.[0] && p !== emailMatch?.[0] && p !== phoneMatch?.[0]
-          ) || null,
         raw: entry,
-        parse_confidence: websiteMatch || emailMatch || phoneMatch ? 0.85 : 0.6,
       };
     })
     .filter((row) => row.company_name);
@@ -153,7 +229,7 @@ async function fetchWebsiteText(website: string) {
       method: "GET",
       redirect: "follow",
       headers: {
-        "User-Agent": "FreshwareLeadWebsiteAnalyzer/1.0",
+        "User-Agent": "FreshwareCompanyDiscovery/1.0",
         Accept: "text/html,application/xhtml+xml",
       },
       cache: "no-store",
@@ -221,283 +297,271 @@ function detectSignals(html: string, text: string, website: string) {
   };
 }
 
-function parseJsonFromResponse(data: any): string {
-  if (typeof data?.output_text === "string" && data.output_text.trim()) {
-    return data.output_text.trim();
-  }
-
-  const output = Array.isArray(data?.output) ? data.output : [];
-  const parts: string[] = [];
-
-  for (const item of output) {
-    const content = Array.isArray(item?.content) ? item.content : [];
-    for (const part of content) {
-      if (typeof part?.text === "string" && part.text.trim()) {
-        parts.push(part.text);
-      }
-    }
-  }
-
-  return parts.join("\n").trim();
-}
-
-function buildFallbackLead(input: {
-  companyName: string;
-  website: string | null;
-  geography: string;
-  industries: string;
-  serviceFocus: string;
-  notes: string;
-  mode: string;
-}) {
-  const website = input.website || "";
-  const service = input.serviceFocus || "consulting";
-
-  let detectedNeed = "Technology strategy and growth support";
-  let recommendedService = service;
-  let fitScore = 60;
-  let needScore = 60;
-  let urgencyScore = 55;
-  let accessScore = website ? 72 : 42;
-
-  if (website) {
-    fitScore += 8;
-    urgencyScore += 6;
-  }
-
-  if ((input.notes || "").toLowerCase().includes("automation")) {
-    detectedNeed = "Workflow automation and operational efficiency";
-    recommendedService = "ai";
-    needScore = 78;
-  } else if ((input.notes || "").toLowerCase().includes("mobile")) {
-    detectedNeed = "Mobile customer experience and engagement";
-    recommendedService = "mobile_app";
-    needScore = 75;
-  } else if ((input.notes || "").toLowerCase().includes("website")) {
-    detectedNeed = "Website modernization and stronger conversion flow";
-    recommendedService = "website";
-    needScore = 74;
-  }
-
-  const totalScore = Math.round((fitScore + needScore + urgencyScore + accessScore) / 4);
-
-  return {
-    detected_need: detectedNeed,
-    recommended_service_line: recommendedService,
-    fit_score: fitScore,
-    need_score: needScore,
-    urgency_score: urgencyScore,
-    access_score: accessScore,
-    total_score: totalScore,
-    ai_summary: `${input.companyName} appears to be a reasonable lead for ${titleCaseService(recommendedService)} support.`,
-    ai_reasoning: `Generated from Freshware ${input.mode} mode using available targeting inputs.`,
-    outreach_angle: `Lead with business value around ${detectedNeed.toLowerCase()}.`,
-    first_touch_message: `Hi, I came across ${input.companyName} and noticed what looks like an opportunity around ${detectedNeed.toLowerCase()}. My team helps businesses improve growth, efficiency, and customer experience through practical ${titleCaseService(recommendedService)} support. Would you be open to a quick conversation to see if there is a fit?`,
-  };
-}
-
-async function analyzeSpecificCompanyWithOpenAI(input: {
+function buildHeuristicLead(input: {
   companyName: string;
   website: string | null;
   serviceFocus: string;
-  notes: string;
-}) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-
-  const model = process.env.OPENAI_LEAD_GEN_MODEL || "gpt-5-mini";
-
-  const prompt = `
-You are generating a single prospect record for a B2B technology agency.
-
-Return STRICT JSON only:
-{
-  "detected_need": "string",
-  "recommended_service_line": "website | mobile_app | software | ai | support | consulting",
-  "fit_score": 0,
-  "need_score": 0,
-  "urgency_score": 0,
-  "access_score": 0,
-  "total_score": 0,
-  "ai_summary": "string",
-  "ai_reasoning": "string",
-  "outreach_angle": "string",
-  "first_touch_message": "string"
-}
-
-Company:
-${JSON.stringify(input, null, 2)}
-  `.trim();
-
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      input: prompt,
-    }),
-  });
-
-  if (!response.ok) return null;
-
-  const data = await response.json().catch(() => null);
-  if (!data) return null;
-
-  const text = parseJsonFromResponse(data);
-  if (!text) return null;
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-async function analyzeWebsiteWithOpenAI(input: {
-  companyName: string;
-  website: string;
+  snippet: string;
   websiteText: string;
-  currentNeed: string | null;
-  currentService: string | null;
 }) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
+  const service = input.serviceFocus || "consulting";
+  const text = `${input.snippet} ${input.websiteText}`.toLowerCase();
 
-  const model = process.env.OPENAI_LEAD_WEBSITE_MODEL || "gpt-5-mini";
+  let recommended = service || "consulting";
+  let need = "Technology strategy and growth support";
+  let fit = 62;
+  let needScore = 60;
+  let urgency = 55;
+  let access = input.website ? 68 : 35;
 
-  const prompt = `
-You are analyzing a lead's website for a software and digital transformation agency.
-
-Return STRICT JSON only in this shape:
-{
-  "detected_need": "string or null",
-  "recommended_service_line": "website | mobile_app | software | ai | support | consulting | null",
-  "fit_score": 0,
-  "need_score": 0,
-  "urgency_score": 0,
-  "access_score": 0,
-  "total_score": 0,
-  "ai_summary": "string",
-  "ai_reasoning": "string",
-  "outreach_angle": "string",
-  "first_touch_message": "string",
-  "website_analysis": {
-    "digital_maturity": "low | medium | high | unknown",
-    "signals": ["string"],
-    "risks": ["string"],
-    "opportunities": ["string"],
-    "insights": ["string"]
-  }
-}
-
-Lead:
-${JSON.stringify(input, null, 2)}
-  `.trim();
-
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      input: prompt,
-    }),
-  });
-
-  if (!response.ok) return null;
-
-  const data = await response.json().catch(() => null);
-  if (!data) return null;
-
-  const text = parseJsonFromResponse(data);
-  if (!text) return null;
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-function fallbackWebsiteAnalysis(input: {
-  companyName: string;
-  website: string;
-  signals: ReturnType<typeof detectSignals>;
-}) {
-  const s = input.signals;
-
-  let recommended = "consulting";
-  let need = "Needs discovery";
-  const opportunities: string[] = [];
-  const risks: string[] = [];
-  const insights: string[] = [];
-
-  if (s.likelyOutdated) {
-    recommended = "website";
-    need = "Website modernization and stronger conversion flow";
-    opportunities.push("Improve website conversion");
-    opportunities.push("Modernize mobile and CTA experience");
-    insights.push("The website appears to have weak modern conversion signals.");
-  }
-
-  if (s.hasBooking && !s.hasPortal) {
+  if (text.includes("book") || text.includes("schedule") || text.includes("appointment")) {
     recommended = "software";
     need = "Booking workflow optimization and internal process automation";
-    opportunities.push("Automate intake and scheduling workflows");
-    insights.push("There may be an operational workflow opportunity around scheduling.");
+    fit += 8;
+    needScore += 12;
   }
 
-  if (s.hasPortal) {
+  if (text.includes("portal") || text.includes("login") || text.includes("dashboard")) {
     recommended = "support";
     need = "Platform support, optimization, or expansion";
-    opportunities.push("Improve existing platform support and visibility");
-    insights.push("The business may already have a customer-facing system that could be optimized.");
+    fit += 8;
+    needScore += 10;
   }
 
-  if (s.hasAppLanguage) {
-    opportunities.push("Potential app optimization or feature expansion");
-    insights.push("There are signs of app-related digital maturity.");
+  if (
+    text.includes("outdated") ||
+    text.includes("website") ||
+    text.includes("mobile") ||
+    text.includes("contact us")
+  ) {
+    if (recommended === service || !recommended) recommended = "website";
+    need = "Website modernization and stronger conversion flow";
+    urgency += 10;
   }
 
-  if (!s.hasContactForm) {
-    risks.push("Weak contact or conversion path");
+  if (text.includes("manual") || text.includes("paperwork") || text.includes("spreadsheet")) {
+    recommended = "ai";
+    need = "Workflow automation and operational efficiency";
+    urgency += 8;
+    needScore += 8;
   }
 
-  if (!s.hasHttps) {
-    risks.push("Security trust signal is weak");
-  }
+  const total = Math.min(
+    100,
+    Math.round((Number(fit) + Number(needScore) + Number(urgency) + Number(access)) / 4)
+  );
 
   return {
     detected_need: need,
     recommended_service_line: recommended,
-    fit_score: 65,
-    need_score: s.likelyOutdated ? 78 : 58,
-    urgency_score: !s.hasContactForm ? 72 : 48,
-    access_score: 45,
-    total_score: s.likelyOutdated ? 72 : 55,
-    ai_summary: `${input.companyName} shows digital signals that suggest opportunity for ${recommended === "website" ? "website improvement" : recommended}.`,
-    ai_reasoning: `Website signals indicate ${need.toLowerCase()}.`,
-    outreach_angle: `Lead with business outcomes tied to ${need.toLowerCase()}.`,
-    first_touch_message: `Hi, I checked out ${input.companyName} and noticed a few opportunities to strengthen your digital experience and conversion flow. We help businesses improve systems like this without overcomplicating the process.`,
-    website_analysis: {
-      digital_maturity: s.likelyOutdated ? "low" : "medium",
-      signals: [
-        s.hasHttps ? "HTTPS enabled" : "HTTPS missing or unclear",
-        s.hasContactForm ? "Contact path detected" : "Contact path weak",
-        s.hasBooking ? "Booking flow detected" : "No booking flow detected",
-        s.hasPortal ? "Portal/dashboard language detected" : "No portal language detected",
-        s.hasAppLanguage ? "App language detected" : "No app language detected",
-      ],
-      risks,
-      opportunities,
-      insights,
-    },
+    fit_score: Math.min(100, fit),
+    need_score: Math.min(100, needScore),
+    urgency_score: Math.min(100, urgency),
+    access_score: Math.min(100, access),
+    total_score: total,
+    ai_summary: `${input.companyName} appears to be a real prospect sourced from live web search and scored based on website and search-result signals.`,
+    ai_reasoning: `Freshware sourced this company from live public web search results and applied heuristic scoring using visible website and snippet signals.`,
+    outreach_angle: `Lead with business value tied to ${need.toLowerCase()}.`,
+    first_touch_message: `Hi, I came across ${input.companyName} and noticed what looks like an opportunity around ${need.toLowerCase()}. My team helps businesses improve growth, efficiency, and customer experience through practical ${titleCaseService(recommended)} support. Would you be open to a quick conversation to see if there is a fit?`,
   };
+}
+
+function buildFallbackQueries(input: {
+  mode: string;
+  geography: string;
+  industries: string;
+  serviceFocus: string;
+  buyerTitles: string;
+  companySizes: string;
+  notes: string;
+  benchmarkCompany?: BenchmarkCompany;
+}) {
+  const geo = safeText(input.geography) || "Houston";
+  const industries = splitList(input.industries || input.benchmarkCompany?.industry || "").slice(0, 4);
+  const primaryIndustry = industries[0] || "small business";
+  const size = safeText(input.companySizes);
+  const service = titleCaseService(input.serviceFocus || "consulting");
+
+  const queries = new Set<string>();
+
+  if (input.mode === "similar_to_company" && input.benchmarkCompany?.name) {
+    queries.add(`${primaryIndustry} company ${geo}`);
+    queries.add(`${primaryIndustry} business ${geo}`);
+    queries.add(`${input.benchmarkCompany.name} competitors ${geo}`);
+  } else if (input.mode === "likely_needs") {
+    queries.add(`${primaryIndustry} ${geo} business`);
+    queries.add(`${primaryIndustry} ${geo} company website`);
+    queries.add(`${primaryIndustry} ${geo} appointment booking company`);
+  } else if (input.mode === "specific_company") {
+    queries.add(`${primaryIndustry} ${geo}`);
+  } else {
+    queries.add(`${primaryIndustry} ${geo} company`);
+    queries.add(`${primaryIndustry} ${geo} business`);
+    queries.add(`${primaryIndustry} ${geo} services`);
+  }
+
+  if (size) {
+    queries.add(`${primaryIndustry} ${geo} ${size} company`);
+  }
+
+  if (service) {
+    queries.add(`${primaryIndustry} ${geo}`);
+  }
+
+  return Array.from(queries).slice(0, 6);
+}
+
+async function buildQueriesWithAI(input: {
+  mode: string;
+  geography: string;
+  industries: string;
+  serviceFocus: string;
+  buyerTitles: string;
+  companySizes: string;
+  notes: string;
+  benchmarkCompany?: BenchmarkCompany;
+}) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return buildFallbackQueries(input);
+  }
+
+  try {
+    const prompt = `
+You are building public web search queries to find real business websites for B2B sales prospecting.
+
+Return STRICT JSON only:
+{ "queries": ["q1", "q2", "q3", "q4", "q5"] }
+
+Rules:
+- Queries must try to find real company websites, not articles.
+- Prefer local businesses and organizations.
+- Do not include site:linkedin.com, site:facebook.com, or other social sites.
+- Keep each query short and practical.
+
+Input:
+${JSON.stringify(input, null, 2)}
+    `.trim();
+
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_LEAD_QUERY_MODEL || "gpt-5-mini",
+        input: prompt,
+      }),
+    });
+
+    if (!res.ok) {
+      return buildFallbackQueries(input);
+    }
+
+    const data = await res.json().catch(() => null);
+    const outputText =
+      typeof data?.output_text === "string" && data.output_text.trim()
+        ? data.output_text.trim()
+        : "";
+
+    if (!outputText) {
+      return buildFallbackQueries(input);
+    }
+
+    const parsed = JSON.parse(outputText);
+    const queries = Array.isArray(parsed?.queries)
+      ? parsed.queries.map((q: unknown) => safeText(q)).filter(Boolean)
+      : [];
+
+    return queries.length ? queries.slice(0, 6) : buildFallbackQueries(input);
+  } catch {
+    return buildFallbackQueries(input);
+  }
+}
+
+async function searchDuckDuckGo(query: string, perQueryLimit: number): Promise<SearchResult[]> {
+  try {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "FreshwareCompanyDiscovery/1.0",
+        Accept: "text/html,text/plain;q=0.9,*/*;q=0.8",
+      },
+      cache: "no-store",
+      redirect: "follow",
+    });
+
+    if (!res.ok) return [];
+
+    const html = await res.text();
+    const results: SearchResult[] = [];
+
+    const regex =
+      /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<a[^>]*class="result__snippet"[^>]*>|<div[^>]*class="result__snippet"[^>]*>)([\s\S]*?)(?:<\/a>|<\/div>)/gi;
+
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(html)) && results.length < perQueryLimit) {
+      let href = htmlDecode(match[1] || "").trim();
+      const title = stripTags(match[2] || "");
+      const snippet = stripTags(match[3] || "");
+
+      if (href.startsWith("//")) href = `https:${href}`;
+
+      try {
+        const maybe = new URL(href);
+        const uddg = maybe.searchParams.get("uddg");
+        if (uddg) href = decodeURIComponent(uddg);
+      } catch {
+        // ignore
+      }
+
+      const domain = getDomain(href);
+      if (!domain) continue;
+      if (isExcludedDomain(domain)) continue;
+
+      results.push({
+        title,
+        url: href,
+        snippet,
+        domain,
+        query,
+      });
+    }
+
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+async function discoverRealCompanies(input: {
+  mode: string;
+  geography: string;
+  industries: string;
+  serviceFocus: string;
+  buyerTitles: string;
+  companySizes: string;
+  notes: string;
+  benchmarkCompany?: BenchmarkCompany;
+  limit: number;
+}) {
+  const queries = await buildQueriesWithAI(input);
+  const allResults = await Promise.all(
+    queries.map((query: string) =>
+      searchDuckDuckGo(query, Math.max(6, Math.ceil(input.limit / 2)))
+    )
+  );
+  const flat = allResults.flat();
+
+  const deduped = new Map<string, SearchResult>();
+  for (const result of flat) {
+    if (!deduped.has(result.domain)) {
+      deduped.set(result.domain, result);
+    }
+  }
+
+  return Array.from(deduped.values()).slice(0, input.limit);
 }
 
 export async function POST(req: Request) {
@@ -512,24 +576,103 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
 
-    const modeRaw = safeText(body?.mode);
-    const mode = (modeRaw || "ideal_customer") as string;
+    const mode = safeText(body?.mode || "ideal_customer");
     const geography = safeText(body?.geography);
     const industries = safeText(body?.industries);
     const serviceFocus = safeText(body?.serviceFocus) || "consulting";
     const notes = safeText(body?.notes);
     const companySizes = safeText(body?.companySizes);
     const buyerTitles = safeText(body?.buyerTitles);
-    const candidateInput = safeText(body?.candidateInput);
     const sourceLabelInput = safeText(body?.sourceLabel);
     const sourceUrlInput = safeText(body?.sourceUrl);
+    const candidateInput = safeText(body?.candidateInput);
     const limit = Math.max(1, Math.min(100, Number(body?.limit || 25)));
 
     const accountId = profile.account_id;
 
-    let rows: Record<string, any>[] = [];
+    let benchmarkCompany: BenchmarkCompany = null;
+    const lookalikeCompanyId = safeText(body?.lookalikeCompanyId);
+    if (mode === "similar_to_company" && lookalikeCompanyId) {
+      const { data } = await supabase
+        .from("companies")
+        .select("id, name, industry, city, state")
+        .eq("id", lookalikeCompanyId)
+        .eq("account_id", accountId)
+        .maybeSingle();
 
-    if (mode === "specific_company") {
+      benchmarkCompany = (data as BenchmarkCompany) || null;
+    }
+
+    const rows: Record<string, any>[] = [];
+
+    if (mode === "business_lists") {
+      const parsedRows = parseBusinessListBlock(candidateInput);
+      if (!parsedRows.length) {
+        return NextResponse.json(
+          { error: "Add at least one business listing block." },
+          { status: 400 }
+        );
+      }
+
+      for (const row of parsedRows.slice(0, limit)) {
+        const fetched = row.website ? await fetchWebsiteText(row.website) : null;
+        const signals = fetched ? detectSignals(fetched.html, fetched.text, row.website || "") : null;
+        const emails = fetched ? extractEmails(`${fetched.html}\n${fetched.text}`) : [];
+        const phones = fetched ? extractPhones(`${fetched.html}\n${fetched.text}`) : [];
+
+        const ai = buildHeuristicLead({
+          companyName: row.company_name,
+          website: row.website,
+          serviceFocus,
+          snippet: row.raw,
+          websiteText: fetched?.text || "",
+        });
+
+        rows.push({
+          account_id: accountId,
+          company_name: row.company_name,
+          website: row.website,
+          contact_email: row.email || emails[0] || null,
+          contact_phone: row.phone || phones[0] || null,
+          discovered_emails: emails,
+          discovered_phones: phones,
+          industry: toNullable(industries),
+          city: toNullable(geography),
+          source: "business_lists",
+          source_type: "directory",
+          source_label: sourceLabelInput || "Business List Import",
+          source_url: sourceUrlInput || row.website || null,
+          source_snapshot: row.raw,
+          generation_mode: mode,
+          detected_need: ai.detected_need,
+          recommended_service_line: ai.recommended_service_line,
+          fit_score: ai.fit_score,
+          need_score: ai.need_score,
+          urgency_score: ai.urgency_score,
+          access_score: ai.access_score,
+          total_score: ai.total_score,
+          ai_score: ai.total_score,
+          ai_summary: ai.ai_summary,
+          ai_reasoning: ai.ai_reasoning,
+          outreach_angle: ai.outreach_angle,
+          first_touch_message: ai.first_touch_message,
+          website_analysis: signals
+            ? {
+                digital_maturity: signals.likelyOutdated ? "low" : "medium",
+                fetched_from_directory_seed: true,
+                detected_signals: signals,
+              }
+            : null,
+          website_analyzed_at: fetched?.ok ? new Date().toISOString() : null,
+          website_analysis_model: fetched?.ok ? "heuristic_live_web" : null,
+          raw_import_row: row.raw,
+          created_by: user.id,
+          status: "new",
+          tags: ["business_list", "real_company_data"],
+          parse_confidence: 0.85,
+        });
+      }
+    } else if (mode === "specific_company") {
       const companyName = safeText(body?.companyName);
       const website = normalizeWebsite(body?.website);
 
@@ -540,239 +683,166 @@ export async function POST(req: Request) {
         );
       }
 
-      const baseAI =
-        (await analyzeSpecificCompanyWithOpenAI({
-          companyName: companyName || website || "Unnamed Lead",
-          website,
-          serviceFocus,
-          notes,
-        })) ||
-        buildFallbackLead({
-          companyName: companyName || website || "Unnamed Lead",
-          website,
-          geography,
-          industries,
-          serviceFocus,
-          notes,
-          mode,
-        });
+      const fetched = website ? await fetchWebsiteText(website) : null;
+      const signals = fetched ? detectSignals(fetched.html, fetched.text, website || "") : null;
+      const emails = fetched ? extractEmails(`${fetched.html}\n${fetched.text}`) : [];
+      const phones = fetched ? extractPhones(`${fetched.html}\n${fetched.text}`) : [];
 
-      let enriched = {
-        ...baseAI,
-        website_analysis: null as any,
-        website_analyzed_at: null as string | null,
-        website_analysis_model: null as string | null,
-      };
+      const ai = buildHeuristicLead({
+        companyName: companyName || website || "Unnamed Company",
+        website,
+        serviceFocus,
+        snippet: notes,
+        websiteText: fetched?.text || "",
+      });
 
-      if (website) {
-        const fetched = await fetchWebsiteText(website);
-        const signals = detectSignals(fetched.html, fetched.text, website);
-
-        const websiteAI =
-          (await analyzeWebsiteWithOpenAI({
-            companyName: companyName || website,
-            website,
-            websiteText: fetched.text,
-            currentNeed: baseAI.detected_need || null,
-            currentService: baseAI.recommended_service_line || null,
-          })) ||
-          fallbackWebsiteAnalysis({
-            companyName: companyName || website,
-            website,
-            signals,
-          });
-
-        enriched = {
-          ...baseAI,
-          detected_need: websiteAI.detected_need || baseAI.detected_need,
-          recommended_service_line:
-            websiteAI.recommended_service_line || baseAI.recommended_service_line,
-          fit_score: Number(websiteAI.fit_score ?? baseAI.fit_score ?? 0),
-          need_score: Number(websiteAI.need_score ?? baseAI.need_score ?? 0),
-          urgency_score: Number(websiteAI.urgency_score ?? baseAI.urgency_score ?? 0),
-          access_score: Number(websiteAI.access_score ?? baseAI.access_score ?? 0),
-          total_score: Number(websiteAI.total_score ?? baseAI.total_score ?? 0),
-          ai_summary: websiteAI.ai_summary || baseAI.ai_summary,
-          ai_reasoning: websiteAI.ai_reasoning || baseAI.ai_reasoning,
-          outreach_angle: websiteAI.outreach_angle || baseAI.outreach_angle,
-          first_touch_message:
-            websiteAI.first_touch_message || baseAI.first_touch_message,
-          website_analysis: {
-            ...(websiteAI.website_analysis || {}),
-            fetch_ok: fetched.ok,
-            http_status: fetched.status,
-            analyzed_website: website,
-            detected_signals: signals,
-          },
-          website_analyzed_at: new Date().toISOString(),
-          website_analysis_model: process.env.OPENAI_LEAD_WEBSITE_MODEL || "fallback",
-        };
-      }
-
-      rows = [
-        {
-          account_id: accountId,
-          company_name: companyName || website || "Unnamed Lead",
-          website,
-          industry: industries || null,
-          city: geography || null,
-          state: null,
-          source: "specific_company",
-          source_type: "manual",
-          source_label: "Specific Company Analysis",
-          source_url: website || null,
-          source_snapshot: [companyName, website, notes].filter(Boolean).join(" | "),
-          generation_mode: mode,
-          detected_need: enriched.detected_need || null,
-          recommended_service_line:
-            enriched.recommended_service_line || serviceFocus || "consulting",
-          fit_score: Number(enriched.fit_score ?? 0),
-          need_score: Number(enriched.need_score ?? 0),
-          urgency_score: Number(enriched.urgency_score ?? 0),
-          access_score: Number(enriched.access_score ?? 0),
-          total_score: Number(enriched.total_score ?? 0),
-          ai_score: Number(enriched.total_score ?? 0),
-          ai_summary: enriched.ai_summary || null,
-          ai_reasoning: enriched.ai_reasoning || null,
-          outreach_angle: enriched.outreach_angle || null,
-          first_touch_message: enriched.first_touch_message || null,
-          website_analysis: enriched.website_analysis || null,
-          website_analyzed_at: enriched.website_analyzed_at || null,
-          website_analysis_model: enriched.website_analysis_model || null,
-          raw_import_row: [companyName, website, notes].filter(Boolean).join(" | "),
-          created_by: user.id,
-          status: "new",
-          tags: ["specific_company"],
-          parse_confidence: 1,
-        },
-      ];
-    } else if (mode === "business_lists") {
-      const parsedRows = parseBusinessListBlock(candidateInput);
-
-      if (!parsedRows.length) {
-        return NextResponse.json({ error: "Add at least one business listing block." }, { status: 400 });
-      }
-
-      rows = parsedRows.slice(0, limit).map((row) => {
-        const ai = buildFallbackLead({
-          companyName: row.company_name,
-          website: row.website,
-          geography,
-          industries,
-          serviceFocus,
-          notes,
-          mode,
-        });
-
-        return {
-          account_id: accountId,
-          company_name: row.company_name,
-          website: row.website,
-          contact_email: row.email,
-          contact_phone: row.phone,
-          industry: industries || null,
-          city: geography || null,
-          state: null,
-          source: "business_lists",
-          source_type: "directory",
-          source_label: sourceLabelInput || "Business List Import",
-          source_url: sourceUrlInput || null,
-          source_snapshot: row.raw,
-          generation_mode: mode,
-          detected_need: ai.detected_need || null,
-          recommended_service_line:
-            ai.recommended_service_line || serviceFocus || "consulting",
-          fit_score: Number(ai.fit_score ?? 0),
-          need_score: Number(ai.need_score ?? 0),
-          urgency_score: Number(ai.urgency_score ?? 0),
-          access_score: Number(ai.access_score ?? 0),
-          total_score: Number(ai.total_score ?? 0),
-          ai_score: Number(ai.total_score ?? 0),
-          ai_summary: ai.ai_summary || null,
-          ai_reasoning: ai.ai_reasoning || null,
-          outreach_angle: ai.outreach_angle || null,
-          first_touch_message: ai.first_touch_message || null,
-          raw_import_row: row.raw,
-          created_by: user.id,
-          status: "new",
-          tags: ["business_list", sourceLabelInput || "directory"],
-          parse_confidence: row.parse_confidence,
-        };
+      rows.push({
+        account_id: accountId,
+        company_name: companyName || website || "Unnamed Company",
+        website,
+        contact_email: emails[0] || null,
+        contact_phone: phones[0] || null,
+        discovered_emails: emails,
+        discovered_phones: phones,
+        industry: toNullable(industries),
+        city: toNullable(geography),
+        source: "specific_company",
+        source_type: "web_search",
+        source_label: "Specific Company Analysis",
+        source_url: website || null,
+        source_snapshot: [companyName, website, notes].filter(Boolean).join(" | "),
+        generation_mode: mode,
+        detected_need: ai.detected_need,
+        recommended_service_line: ai.recommended_service_line,
+        fit_score: ai.fit_score,
+        need_score: ai.need_score,
+        urgency_score: ai.urgency_score,
+        access_score: ai.access_score,
+        total_score: ai.total_score,
+        ai_score: ai.total_score,
+        ai_summary: ai.ai_summary,
+        ai_reasoning: ai.ai_reasoning,
+        outreach_angle: ai.outreach_angle,
+        first_touch_message: ai.first_touch_message,
+        website_analysis: signals
+          ? {
+              digital_maturity: signals.likelyOutdated ? "low" : "medium",
+              detected_signals: signals,
+            }
+          : null,
+        website_analyzed_at: fetched?.ok ? new Date().toISOString() : null,
+        website_analysis_model: fetched?.ok ? "heuristic_live_web" : null,
+        raw_import_row: null,
+        created_by: user.id,
+        status: "new",
+        tags: ["specific_company", "real_company_data"],
+        parse_confidence: 1,
       });
     } else {
-      const syntheticRows = Array.from({ length: limit }).map((_, idx) => {
-        const baseName =
-          mode === "similar_to_company"
-            ? `Benchmark-Match Company ${idx + 1}`
-            : mode === "likely_needs"
-            ? `Likely Need Prospect ${idx + 1}`
-            : `Ideal Customer Prospect ${idx + 1}`;
+      const realResults = await discoverRealCompanies({
+        mode,
+        geography,
+        industries,
+        serviceFocus,
+        buyerTitles,
+        companySizes,
+        notes,
+        benchmarkCompany,
+        limit,
+      });
 
-        const ai = buildFallbackLead({
-          companyName: baseName,
-          website: null,
-          geography,
-          industries,
+      if (!realResults.length) {
+        return NextResponse.json(
+          {
+            error:
+              "No real companies were found from live public web search. Try a narrower industry + geography combination, or use Business Lists / CSV import.",
+          },
+          { status: 404 }
+        );
+      }
+
+      for (const result of realResults) {
+        const fetched = await fetchWebsiteText(result.url);
+        const signals = detectSignals(fetched.html, fetched.text, result.url);
+        const emails = extractEmails(`${fetched.html}\n${fetched.text}\n${result.snippet}`);
+        const phones = extractPhones(`${fetched.html}\n${fetched.text}\n${result.snippet}`);
+
+        const companyName = cleanCompanyName(result.title, result.domain);
+
+        const ai = buildHeuristicLead({
+          companyName,
+          website: result.url,
           serviceFocus,
-          notes,
-          mode,
+          snippet: result.snippet,
+          websiteText: fetched.text,
         });
 
-        return {
+        rows.push({
           account_id: accountId,
-          company_name: baseName,
-          website: null,
-          contact_email: null,
-          contact_phone: null,
-          industry: industries || null,
-          city: geography || null,
-          state: null,
-          source: mode,
-          source_type: "manual",
+          company_name: companyName,
+          website: result.url,
+          contact_email: emails[0] || null,
+          contact_phone: phones[0] || null,
+          discovered_emails: emails,
+          discovered_phones: phones,
+          industry: toNullable(industries),
+          city: toNullable(geography),
+          source: "live_web_search",
+          source_type: "web_search",
           source_label:
             mode === "similar_to_company"
-              ? "Lookalike Search"
+              ? "Live Lookalike Search"
               : mode === "likely_needs"
-              ? "Likely Needs Search"
-              : "Ideal Customer Search",
-          source_url: null,
-          source_snapshot: [
-            geography ? `Geography: ${geography}` : null,
-            industries ? `Industries: ${industries}` : null,
-            companySizes ? `Company size: ${companySizes}` : null,
-            buyerTitles ? `Buyer titles: ${buyerTitles}` : null,
-            notes || null,
-          ]
-            .filter(Boolean)
-            .join(" | "),
+              ? "Live Likely Needs Search"
+              : "Live Ideal Customer Search",
+          source_url: result.url,
+          source_snapshot: `Query: ${result.query} | Title: ${result.title} | Snippet: ${result.snippet}`,
           generation_mode: mode,
-          detected_need: ai.detected_need || null,
-          recommended_service_line:
-            ai.recommended_service_line || serviceFocus || "consulting",
-          fit_score: Number(ai.fit_score ?? 0),
-          need_score: Number(ai.need_score ?? 0),
-          urgency_score: Number(ai.urgency_score ?? 0),
-          access_score: Number(ai.access_score ?? 0),
-          total_score: Number(ai.total_score ?? 0),
-          ai_score: Number(ai.total_score ?? 0),
-          ai_summary: ai.ai_summary || null,
-          ai_reasoning: ai.ai_reasoning || null,
-          outreach_angle: ai.outreach_angle || null,
-          first_touch_message: ai.first_touch_message || null,
+          detected_need: ai.detected_need,
+          recommended_service_line: ai.recommended_service_line,
+          fit_score: ai.fit_score,
+          need_score: ai.need_score,
+          urgency_score: ai.urgency_score,
+          access_score: ai.access_score,
+          total_score: ai.total_score,
+          ai_score: ai.total_score,
+          ai_summary: ai.ai_summary,
+          ai_reasoning: ai.ai_reasoning,
+          outreach_angle: ai.outreach_angle,
+          first_touch_message: ai.first_touch_message,
+          website_analysis: {
+            digital_maturity: signals.likelyOutdated ? "low" : "medium",
+            detected_signals: signals,
+            search_query: result.query,
+            search_snippet: result.snippet,
+            domain: result.domain,
+          },
+          website_analyzed_at: fetched.ok ? new Date().toISOString() : null,
+          website_analysis_model: "heuristic_live_web",
           raw_import_row: null,
           created_by: user.id,
           status: "new",
-          tags: [mode],
-          parse_confidence: 0.55,
-        };
-      });
-
-      rows = syntheticRows;
+          tags: ["real_company_data", "live_web_search", mode],
+          parse_confidence: 0.88,
+        });
+      }
     }
+
+    const deduped = new Map<string, Record<string, any>>();
+    for (const row of rows) {
+      const key =
+        normalizeWebsite(row.website || "") ||
+        `${String(row.company_name || "").toLowerCase()}::${String(row.city || "").toLowerCase()}`;
+      if (!deduped.has(key)) {
+        deduped.set(key, row);
+      }
+    }
+
+    const finalRows = Array.from(deduped.values()).slice(0, limit);
 
     const { data, error } = await supabase
       .from("lead_prospects")
-      .insert(rows)
+      .insert(finalRows)
       .select("*");
 
     if (error) {
@@ -783,6 +853,8 @@ export async function POST(req: Request) {
       ok: true,
       count: data?.length || 0,
       leads: data || [],
+      source_mode: mode,
+      real_data: true,
     });
   } catch (error) {
     console.error("POST /api/lead-prospects/generate error:", error);
