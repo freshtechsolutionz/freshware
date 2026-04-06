@@ -417,8 +417,6 @@ export default async function DashboardHome() {
   const contactConversion30d =
     visitors30d > 0 ? (newContacts30d / visitors30d) * 100 : 0;
 
-  const revenueTotal = normalizedRevenue.reduce((sum, r) => sum + r.amount, 0);
-
   const { data: myTodoData } = await supabase
     .from("tasks")
     .select("task_id,title,status,due_at,opportunity_id")
@@ -543,7 +541,7 @@ export default async function DashboardHome() {
   const adminTools = [
     { label: "Access Requests", href: "/admin/access-requests" },
     { label: "User Manager", href: "/admin/users" },
-    { label: "System Health", href: "/dashboard/reports/analytics" },
+    { label: "System Health", href: "/dashboard/system-health" },
   ];
 
   return (

@@ -51,6 +51,10 @@ function normalizeName(v: string | null | undefined) {
   return String(v || "").trim().toLowerCase();
 }
 
+function matchesFilter(value: string | null | undefined, q: string) {
+  return String(value || "").toLowerCase().includes(q.toLowerCase());
+}
+
 export default async function CompaniesPage({
   searchParams,
 }: {
@@ -89,6 +93,12 @@ export default async function CompaniesPage({
     String(profile.role || "").toUpperCase()
   );
 
+  const q = String(sp.q || "").trim();
+  const industryFilter = String(sp.industry || "").trim().toLowerCase();
+  const lifecycleFilter = String(sp.lifecycle || "").trim().toLowerCase();
+  const priorityFilter = String(sp.priority || "").trim().toLowerCase();
+  const sort = String(sp.sort || "name_asc");
+
   const [companiesRes, contactsRes, oppsRes, projectsRes] = await Promise.all([
     supabase.from("companies").select("*").eq("account_id", accountId).order("name", { ascending: true }),
     supabase
@@ -118,7 +128,7 @@ export default async function CompaniesPage({
     );
   }
 
-  const companies = (companiesRes.data || []) as CompanyRow[];
+  const companiesRaw = (companiesRes.data || []) as CompanyRow[];
   const contacts = (contactsRes.data || []) as ContactRow[];
   const opps = (oppsRes.data || []) as OpportunityRow[];
   const projects = (projectsRes.data || []) as ProjectRow[];
@@ -127,7 +137,7 @@ export default async function CompaniesPage({
   const oppMetrics: Record<string, { open: number; pipeline: number; won: number }> = {};
   const projectMetrics: Record<string, { total: number; active: number; support: number }> = {};
 
-  for (const company of companies) {
+  for (const company of companiesRaw) {
     const key = company.id;
     contactMetrics[key] = 0;
     oppMetrics[key] = { open: 0, pipeline: 0, won: 0 };
@@ -165,6 +175,55 @@ export default async function CompaniesPage({
     }
   }
 
+  let companies = companiesRaw.filter((company) => {
+    if (
+      q &&
+      ![
+        company.name,
+        company.industry,
+        company.website,
+        company.city,
+        company.state,
+        company.customer_segment,
+        company.lifecycle_stage,
+        company.priority_level,
+        company.internal_account_owner,
+        company.ai_company_info?.executiveSummary,
+        company.ai_company_info?.executive_summary,
+        company.ai_company_info?.summary,
+      ].some((value) => matchesFilter(value, q))
+    ) {
+      return false;
+    }
+
+    if (industryFilter && String(company.industry || "").toLowerCase() !== industryFilter) {
+      return false;
+    }
+
+    if (lifecycleFilter && String(company.lifecycle_stage || "").toLowerCase() !== lifecycleFilter) {
+      return false;
+    }
+
+    if (priorityFilter && String(company.priority_level || "").toLowerCase() !== priorityFilter) {
+      return false;
+    }
+
+    return true;
+  });
+
+  companies = companies.sort((a, b) => {
+    if (sort === "pipeline_desc") {
+      return (oppMetrics[b.id]?.pipeline || 0) - (oppMetrics[a.id]?.pipeline || 0);
+    }
+    if (sort === "support_desc") {
+      return (projectMetrics[b.id]?.support || 0) - (projectMetrics[a.id]?.support || 0);
+    }
+    if (sort === "recent_desc") {
+      return new Date(String(b.created_at || 0)).getTime() - new Date(String(a.created_at || 0)).getTime();
+    }
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  });
+
   const totalPipeline = Object.values(oppMetrics).reduce((sum, x) => sum + (x.pipeline || 0), 0);
   const totalWon = Object.values(oppMetrics).reduce((sum, x) => sum + (x.won || 0), 0);
   const totalSupport = Object.values(projectMetrics).reduce((sum, x) => sum + (x.support || 0), 0);
@@ -193,6 +252,18 @@ export default async function CompaniesPage({
   const unlinkedContacts = unlinkedContactsRes.count ?? 0;
   const unlinkedOpps = unlinkedOppsRes.count ?? 0;
   const unlinkedProjects = unlinkedProjectsRes.count ?? 0;
+
+  const industries = Array.from(
+    new Set(companiesRaw.map((company) => String(company.industry || "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
+
+  const lifecycles = Array.from(
+    new Set(companiesRaw.map((company) => String(company.lifecycle_stage || "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
+
+  const priorities = Array.from(
+    new Set(companiesRaw.map((company) => String(company.priority_level || "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
 
   return (
     <div className="space-y-6">
@@ -232,6 +303,12 @@ export default async function CompaniesPage({
       {sp.linked ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
           Existing contacts, opportunities, and projects were linked where a strong name match was found.
+        </div>
+      ) : null}
+
+      {sp.generated ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+          Company info generated successfully.
         </div>
       ) : null}
 
@@ -281,6 +358,80 @@ export default async function CompaniesPage({
         <MetricCard title="Support Revenue" value={money(totalSupport)} sub="Recurring support value" />
         <MetricCard title="Unlinked Records" value={String(unlinkedContacts + unlinkedOpps + unlinkedProjects)} sub={`${unlinkedContacts} contacts · ${unlinkedOpps} opps · ${unlinkedProjects} projects`} />
         <MetricCard title="Action" value={canEdit ? "Ready" : "View"} sub={canEdit ? "You can create, link, and enrich." : "Read-only visibility"} />
+      </section>
+
+      <section className="rounded-3xl border bg-white p-6 shadow-sm">
+        <div className="text-lg font-semibold text-gray-900">Filters</div>
+        <div className="mt-1 text-sm text-gray-600">
+          Search and sort your company profiles like an executive operating view.
+        </div>
+
+        <form method="get" className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Search</label>
+            <input
+              name="q"
+              defaultValue={q}
+              className="w-full rounded-2xl border px-3 py-2 text-sm"
+              placeholder="Name, industry, owner, summary..."
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Industry</label>
+            <select name="industry" defaultValue={industryFilter} className="w-full rounded-2xl border px-3 py-2 text-sm">
+              <option value="">All</option>
+              {industries.map((value) => (
+                <option key={value} value={value.toLowerCase()}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Lifecycle</label>
+            <select name="lifecycle" defaultValue={lifecycleFilter} className="w-full rounded-2xl border px-3 py-2 text-sm">
+              <option value="">All</option>
+              {lifecycles.map((value) => (
+                <option key={value} value={value.toLowerCase()}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Priority</label>
+            <select name="priority" defaultValue={priorityFilter} className="w-full rounded-2xl border px-3 py-2 text-sm">
+              <option value="">All</option>
+              {priorities.map((value) => (
+                <option key={value} value={value.toLowerCase()}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Sort</label>
+            <select name="sort" defaultValue={sort} className="w-full rounded-2xl border px-3 py-2 text-sm">
+              <option value="name_asc">Name A-Z</option>
+              <option value="pipeline_desc">Highest Pipeline</option>
+              <option value="support_desc">Highest Support</option>
+              <option value="recent_desc">Recently Added</option>
+            </select>
+          </div>
+
+          <div className="md:col-span-2 xl:col-span-5 flex gap-2">
+            <button type="submit" className="fw-btn text-sm">
+              Apply Filters
+            </button>
+            <Link href="/dashboard/companies" className="fw-btn text-sm">
+              Reset
+            </Link>
+          </div>
+        </form>
       </section>
 
       <section className="rounded-3xl border bg-white p-6 shadow-sm">
@@ -383,9 +534,10 @@ export default async function CompaniesPage({
                           Open 360
                         </Link>
 
-                        <form action={`/api/companies/${company.id}/generate-info`} method="post">
+                        <form action={`/dashboard/companies?generated=1`} method="get">
+                          <input type="hidden" name="generated" value="1" />
                           <button
-                            type="submit"
+                            formAction={`/api/companies/${company.id}/generate-info`}
                             className="rounded-xl border px-3 py-2 text-xs font-semibold hover:bg-gray-50"
                           >
                             Generate Company Info
@@ -401,7 +553,7 @@ export default async function CompaniesPage({
 
           {!companies.length ? (
             <div className="mt-4 text-sm text-gray-600">
-              No company profiles yet. Click <span className="font-semibold">New Company</span> to create one.
+              No company profiles matched your current filters.
             </div>
           ) : null}
         </div>
