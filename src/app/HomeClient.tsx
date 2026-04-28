@@ -26,24 +26,51 @@ export default function HomeClient() {
   const nextUrl = useMemo(() => searchParams.get("next") || "/dashboard", [searchParams]);
 
   useEffect(() => {
-    let mounted = true;
+  let mounted = true;
 
-    (async () => {
-      const { data } = await supabase.auth.getSession();
+  const timeout = setTimeout(() => {
+    if (mounted) {
+      setChecking(false);
+    }
+  }, 2500);
+
+  (async () => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
       if (!mounted) return;
 
-      if (data.session) {
-        router.replace(nextUrl);
+      clearTimeout(timeout);
+
+      if (session?.user) {
+        window.location.href = nextUrl;
         return;
       }
 
       setChecking(false);
-    })();
+    } catch (err) {
+      console.error("Portal session error", err);
 
-    return () => {
-      mounted = false;
-    };
-  }, [router, nextUrl]);
+      if (!mounted) return;
+
+      clearTimeout(timeout);
+
+      try {
+        localStorage.removeItem("supabase.auth.token");
+        sessionStorage.clear();
+      } catch {}
+
+      setChecking(false);
+    }
+  })();
+
+  return () => {
+    mounted = false;
+    clearTimeout(timeout);
+  };
+}, [nextUrl]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();

@@ -37,29 +37,51 @@ export default function PortalClient() {
   const nextUrl = useMemo(() => getSafeNext(searchParams.get("next")), [searchParams]);
 
   useEffect(() => {
-    let mounted = true;
+  let mounted = true;
 
-    (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (!mounted) return;
+  const timeout = setTimeout(() => {
+    if (mounted) {
+      setChecking(false);
+    }
+  }, 2500);
 
-        if (data.session) {
-          router.replace(nextUrl);
-          return;
-        }
+  (async () => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-        setChecking(false);
-      } catch {
-        if (!mounted) return;
-        setChecking(false);
+      if (!mounted) return;
+
+      clearTimeout(timeout);
+
+      if (session?.user) {
+        window.location.href = nextUrl;
+        return;
       }
-    })();
 
-    return () => {
-      mounted = false;
-    };
-  }, [router, nextUrl]);
+      setChecking(false);
+    } catch (err) {
+      console.error("Portal session error", err);
+
+      if (!mounted) return;
+
+      clearTimeout(timeout);
+
+      try {
+        localStorage.removeItem("supabase.auth.token");
+        sessionStorage.clear();
+      } catch {}
+
+      setChecking(false);
+    }
+  })();
+
+  return () => {
+    mounted = false;
+    clearTimeout(timeout);
+  };
+}, [nextUrl]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
