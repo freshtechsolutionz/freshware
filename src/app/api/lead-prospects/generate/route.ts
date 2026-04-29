@@ -9,6 +9,7 @@ type SearchResult = {
   snippet: string;
   domain: string;
   query: string;
+  provider: string;
 };
 
 type BenchmarkCompany = {
@@ -48,8 +49,7 @@ function normalizeEmail(raw: string | null | undefined) {
 
 function normalizePhone(raw: string | null | undefined) {
   const value = safeText(raw);
-  if (!value) return null;
-  return value;
+  return value || null;
 }
 
 function titleCaseService(service: string | null | undefined) {
@@ -84,6 +84,18 @@ function stripTags(input: string) {
   return htmlDecode(input.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
 }
 
+function stripHtml(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function getDomain(url: string) {
   try {
     return new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
@@ -116,6 +128,8 @@ function isExcludedDomain(domain: string) {
     "duckduckgo.com",
     "google.com",
     "bing.com",
+    "apple.com",
+    "play.google.com",
   ];
 
   return blocked.some((bad) => domain === bad || domain.endsWith(`.${bad}`));
@@ -125,12 +139,12 @@ function cleanCompanyName(title: string, domain: string) {
   const base = stripTags(title)
     .replace(/\s*\|\s*.*$/g, "")
     .replace(/\s*-\s*.*$/g, "")
+    .replace(/\bhome\b/i, "")
     .trim();
 
   if (base && base.length >= 3) return base;
 
-  const host = domain.replace(/^www\./, "");
-  const root = host.split(".")[0] || "Unnamed Company";
+  const root = domain.replace(/^www\./, "").split(".")[0] || "Unnamed Company";
   return root
     .split(/[-_]/)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -145,13 +159,35 @@ function extractEmails(text: string) {
         .map((v) => normalizeEmail(v))
         .filter((v): v is string => Boolean(v))
         .filter((v) => !v.includes("example.com"))
+        .filter((v) => !v.includes("domain.com"))
+        .filter((v) => !v.endsWith("@email.com"))
     )
-  ).slice(0, 8);
+  ).slice(0, 12);
 }
 
 function extractPhones(text: string) {
   const matches = text.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g) || [];
-  return Array.from(new Set(matches.map((v) => v.trim()))).slice(0, 8);
+  return Array.from(new Set(matches.map((v) => v.trim()))).slice(0, 12);
+}
+
+function parseJsonFromResponse(data: any): string {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+
+  const output = Array.isArray(data?.output) ? data.output : [];
+  const parts: string[] = [];
+
+  for (const item of output) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      if (typeof part?.text === "string" && part.text.trim()) {
+        parts.push(part.text);
+      }
+    }
+  }
+
+  return parts.join("\n").trim();
 }
 
 function parseBusinessListBlock(text: string) {
@@ -211,18 +247,6 @@ function parseBusinessListBlock(text: string) {
     .filter((row) => row.company_name);
 }
 
-function stripHtml(html: string) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 async function fetchWebsiteText(website: string) {
   try {
     const res = await fetch(website, {
@@ -240,12 +264,69 @@ async function fetchWebsiteText(website: string) {
     }
 
     const html = await res.text();
-    const text = stripHtml(html).slice(0, 12000);
+    const text = stripHtml(html).slice(0, 16000);
 
     return { ok: true, status: res.status, html, text };
   } catch {
     return { ok: false, status: 0, html: "", text: "" };
   }
+}
+
+function extractContactLinks(html: string, baseWebsite: string) {
+  const hrefRegex = /href=["']([^"']+)["']/gi;
+  const links: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = hrefRegex.exec(html))) {
+    const href = match[1] || "";
+    const h = href.toLowerCase();
+
+    if (
+      h.includes("contact") ||
+      h.includes("about") ||
+      h.includes("team") ||
+      h.includes("staff") ||
+      h.includes("leadership") ||
+      h.includes("location")
+    ) {
+      try {
+        links.push(new URL(href, baseWebsite).toString());
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const base = new URL(baseWebsite);
+  const guesses = ["/contact", "/contact-us", "/about", "/about-us", "/team", "/staff"].map(
+    (path) => `${base.origin}${path}`
+  );
+
+  return Array.from(new Set([...links, ...guesses])).slice(0, 5);
+}
+
+async function fetchContactIntel(website: string, homeHtml: string, homeText: string) {
+  const links = extractContactLinks(homeHtml, website);
+  let combinedHtml = homeHtml;
+  let combinedText = homeText;
+  let contactPageUrl: string | null = links[0] || null;
+
+  for (const link of links) {
+    const fetched = await fetchWebsiteText(link);
+    if (fetched.ok) {
+      contactPageUrl = link;
+      combinedHtml += `\n${fetched.html}`;
+      combinedText += `\n${fetched.text}`;
+    }
+  }
+
+  return {
+    contactPageUrl,
+    emails: extractEmails(`${combinedHtml}\n${combinedText}`),
+    phones: extractPhones(`${combinedHtml}\n${combinedText}`),
+    combinedText,
+    combinedHtml,
+  };
 }
 
 function detectSignals(html: string, text: string, website: string) {
@@ -271,10 +352,10 @@ function detectSignals(html: string, text: string, website: string) {
     lcText.includes("login");
 
   const hasAppLanguage =
-    lcText.includes("app") ||
-    lcText.includes("mobile app") ||
     lcText.includes("download on the app store") ||
-    lcText.includes("google play");
+    lcText.includes("google play") ||
+    lcText.includes("mobile app") ||
+    lcText.includes("our app");
 
   const hasEcommerce =
     lcText.includes("shop") ||
@@ -295,6 +376,391 @@ function detectSignals(html: string, text: string, website: string) {
     hasEcommerce,
     likelyOutdated,
   };
+}
+
+async function searchBrave(query: string, limit: number): Promise<SearchResult[]> {
+  const key = process.env.BRAVE_SEARCH_API_KEY;
+  if (!key) return [];
+
+  try {
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(
+      query
+    )}&count=${Math.min(20, limit)}`;
+
+    const res = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "X-Subscription-Token": key,
+      },
+      cache: "no-store",
+    });
+
+    if (!res.ok) return [];
+
+    const json = await res.json();
+    const items = Array.isArray(json?.web?.results) ? json.web.results : [];
+
+    return items
+      .map((item: any) => {
+        const url = String(item?.url || "");
+        return {
+          title: stripTags(String(item?.title || "")),
+          url,
+          snippet: stripTags(String(item?.description || "")),
+          domain: getDomain(url),
+          query,
+          provider: "brave",
+        };
+      })
+      .filter((r: SearchResult) => r.url && r.domain && !isExcludedDomain(r.domain))
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+async function searchSerpApi(query: string, limit: number): Promise<SearchResult[]> {
+  const key = process.env.SERPAPI_API_KEY;
+  if (!key) return [];
+
+  try {
+    const url = `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(
+      query
+    )}&num=${Math.min(20, limit)}&api_key=${key}`;
+
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return [];
+
+    const json = await res.json();
+    const items = Array.isArray(json?.organic_results) ? json.organic_results : [];
+
+    return items
+      .map((item: any) => {
+        const url = String(item?.link || "");
+        return {
+          title: stripTags(String(item?.title || "")),
+          url,
+          snippet: stripTags(String(item?.snippet || "")),
+          domain: getDomain(url),
+          query,
+          provider: "serpapi",
+        };
+      })
+      .filter((r: SearchResult) => r.url && r.domain && !isExcludedDomain(r.domain))
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+async function searchBing(query: string, limit: number): Promise<SearchResult[]> {
+  const key = process.env.BING_SEARCH_API_KEY;
+  if (!key) return [];
+
+  try {
+    const url = `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(
+      query
+    )}&count=${Math.min(20, limit)}&responseFilter=Webpages`;
+
+    const res = await fetch(url, {
+      headers: {
+        "Ocp-Apim-Subscription-Key": key,
+      },
+      cache: "no-store",
+    });
+
+    if (!res.ok) return [];
+
+    const json = await res.json();
+    const items = Array.isArray(json?.webPages?.value) ? json.webPages.value : [];
+
+    return items
+      .map((item: any) => {
+        const url = String(item?.url || "");
+        return {
+          title: stripTags(String(item?.name || "")),
+          url,
+          snippet: stripTags(String(item?.snippet || "")),
+          domain: getDomain(url),
+          query,
+          provider: "bing",
+        };
+      })
+      .filter((r: SearchResult) => r.url && r.domain && !isExcludedDomain(r.domain))
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+async function searchGoogleCse(query: string, limit: number): Promise<SearchResult[]> {
+  const key = process.env.GOOGLE_SEARCH_API_KEY;
+  const cx = process.env.GOOGLE_CSE_ID;
+  if (!key || !cx) return [];
+
+  try {
+    const url = `https://www.googleapis.com/customsearch/v1?key=${key}&cx=${cx}&q=${encodeURIComponent(
+      query
+    )}&num=${Math.min(10, limit)}`;
+
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return [];
+
+    const json = await res.json();
+    const items = Array.isArray(json?.items) ? json.items : [];
+
+    return items
+      .map((item: any) => {
+        const url = String(item?.link || "");
+        return {
+          title: stripTags(String(item?.title || "")),
+          url,
+          snippet: stripTags(String(item?.snippet || "")),
+          domain: getDomain(url),
+          query,
+          provider: "google_cse",
+        };
+      })
+      .filter((r: SearchResult) => r.url && r.domain && !isExcludedDomain(r.domain))
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+async function searchDuckDuckGo(query: string, limit: number): Promise<SearchResult[]> {
+  try {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "FreshwareCompanyDiscovery/1.0",
+        Accept: "text/html,text/plain;q=0.9,*/*;q=0.8",
+      },
+      cache: "no-store",
+      redirect: "follow",
+    });
+
+    if (!res.ok) return [];
+
+    const html = await res.text();
+    const results: SearchResult[] = [];
+
+    const regex =
+      /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:class="result__snippet"[^>]*>)([\s\S]*?)(?:<\/a>|<\/div>)/gi;
+
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(html)) && results.length < limit) {
+      let href = htmlDecode(match[1] || "").trim();
+      const title = stripTags(match[2] || "");
+      const snippet = stripTags(match[3] || "");
+
+      if (href.startsWith("//")) href = `https:${href}`;
+
+      try {
+        const maybe = new URL(href);
+        const uddg = maybe.searchParams.get("uddg");
+        if (uddg) href = decodeURIComponent(uddg);
+      } catch {
+        // ignore
+      }
+
+      const domain = getDomain(href);
+      if (!domain || isExcludedDomain(domain)) continue;
+
+      results.push({
+        title,
+        url: href,
+        snippet,
+        domain,
+        query,
+        provider: "duckduckgo",
+      });
+    }
+
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+async function runSearchProviders(query: string, limit: number) {
+  const providerLimit = Math.max(5, Math.min(20, limit));
+
+  const brave = await searchBrave(query, providerLimit);
+  if (brave.length) return brave;
+
+  const serp = await searchSerpApi(query, providerLimit);
+  if (serp.length) return serp;
+
+  const bing = await searchBing(query, providerLimit);
+  if (bing.length) return bing;
+
+  const google = await searchGoogleCse(query, providerLimit);
+  if (google.length) return google;
+
+  return searchDuckDuckGo(query, providerLimit);
+}
+
+async function searchAppStores(companyName: string) {
+  const clean = safeText(companyName);
+  if (!clean) {
+    return {
+      apple_app_store_url: null,
+      google_play_url: null,
+      has_ios_app: false,
+      has_android_app: false,
+    };
+  }
+
+  const appleQuery = `${clean} app site:apps.apple.com`;
+  const playQuery = `${clean} app site:play.google.com/store/apps`;
+
+  const [appleResults, playResults] = await Promise.all([
+    runSearchProviders(appleQuery, 3),
+    runSearchProviders(playQuery, 3),
+  ]);
+
+  const apple = appleResults.find((r) => r.domain.includes("apps.apple.com"));
+  const play = playResults.find((r) => r.url.includes("play.google.com/store/apps"));
+
+  return {
+    apple_app_store_url: apple?.url || null,
+    google_play_url: play?.url || null,
+    has_ios_app: Boolean(apple?.url),
+    has_android_app: Boolean(play?.url),
+  };
+}
+
+function buildFallbackQueries(input: {
+  mode: string;
+  geography: string;
+  industries: string;
+  serviceFocus: string;
+  buyerTitles: string;
+  companySizes: string;
+  notes: string;
+  benchmarkCompany?: BenchmarkCompany;
+}) {
+  const geo = safeText(input.geography) || "Houston";
+  const industries = splitList(input.industries || input.benchmarkCompany?.industry || "").slice(0, 5);
+  const primaryIndustry = industries[0] || "small business";
+  const size = safeText(input.companySizes);
+  const titles = safeText(input.buyerTitles);
+  const queries = new Set<string>();
+
+  if (input.mode === "similar_to_company" && input.benchmarkCompany?.name) {
+    queries.add(`${primaryIndustry} companies ${geo}`);
+    queries.add(`${primaryIndustry} businesses ${geo}`);
+    queries.add(`${input.benchmarkCompany.name} competitors ${geo}`);
+    queries.add(`best ${primaryIndustry} companies ${geo}`);
+  } else if (input.mode === "likely_needs") {
+    queries.add(`${primaryIndustry} ${geo} book appointment`);
+    queries.add(`${primaryIndustry} ${geo} contact us`);
+    queries.add(`${primaryIndustry} ${geo} services`);
+    queries.add(`${primaryIndustry} ${geo} online scheduling`);
+  } else {
+    queries.add(`${primaryIndustry} companies ${geo}`);
+    queries.add(`${primaryIndustry} businesses ${geo}`);
+    queries.add(`${primaryIndustry} services ${geo}`);
+    queries.add(`${primaryIndustry} organization ${geo}`);
+  }
+
+  for (const industry of industries.slice(1)) {
+    queries.add(`${industry} companies ${geo}`);
+    queries.add(`${industry} businesses ${geo}`);
+  }
+
+  if (size) queries.add(`${size} ${primaryIndustry} companies ${geo}`);
+  if (titles) queries.add(`${primaryIndustry} ${titles} ${geo}`);
+
+  return Array.from(queries).slice(0, 10);
+}
+
+async function buildQueriesWithAI(input: {
+  mode: string;
+  geography: string;
+  industries: string;
+  serviceFocus: string;
+  buyerTitles: string;
+  companySizes: string;
+  notes: string;
+  benchmarkCompany?: BenchmarkCompany;
+}) {
+  const fallback = buildFallbackQueries(input);
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return fallback;
+
+  try {
+    const prompt = `
+You are building public web search queries to find real business websites for B2B sales prospecting.
+
+Return STRICT JSON only:
+{ "queries": ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"] }
+
+Rules:
+- Find real company websites.
+- Prefer company homepages, contact pages, directories only if needed.
+- Avoid social media, job boards, review sites, and articles.
+- Use the geography and industry.
+- Keep each query practical.
+
+Input:
+${JSON.stringify(input, null, 2)}
+    `.trim();
+
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_LEAD_QUERY_MODEL || "gpt-5-mini",
+        input: prompt,
+      }),
+    });
+
+    if (!res.ok) return fallback;
+
+    const data = await res.json().catch(() => null);
+    const outputText = data ? parseJsonFromResponse(data) : "";
+    if (!outputText) return fallback;
+
+    const parsed = JSON.parse(outputText);
+    const queries = Array.isArray(parsed?.queries)
+      ? parsed.queries.map((q: unknown) => safeText(q)).filter(Boolean)
+      : [];
+
+    return Array.from(new Set([...queries, ...fallback])).slice(0, 12);
+  } catch {
+    return fallback;
+  }
+}
+
+async function discoverRealCompanies(input: {
+  mode: string;
+  geography: string;
+  industries: string;
+  serviceFocus: string;
+  buyerTitles: string;
+  companySizes: string;
+  notes: string;
+  benchmarkCompany?: BenchmarkCompany;
+  limit: number;
+}) {
+  const queries = await buildQueriesWithAI(input);
+  const allResults = await Promise.all(
+    queries.map((query) => runSearchProviders(query, Math.max(8, Math.ceil(input.limit / 2))))
+  );
+
+  const deduped = new Map<string, SearchResult>();
+  for (const result of allResults.flat()) {
+    if (!result.domain) continue;
+    if (isExcludedDomain(result.domain)) continue;
+    if (!deduped.has(result.domain)) deduped.set(result.domain, result);
+  }
+
+  return Array.from(deduped.values()).slice(0, input.limit);
 }
 
 function buildHeuristicLead(input: {
@@ -328,12 +794,14 @@ function buildHeuristicLead(input: {
     needScore += 10;
   }
 
-  if (
-    text.includes("outdated") ||
-    text.includes("website") ||
-    text.includes("mobile") ||
-    text.includes("contact us")
-  ) {
+  if (text.includes("mobile app") || text.includes("google play") || text.includes("app store")) {
+    recommended = "mobile_app";
+    need = "Mobile app optimization, modernization, or feature expansion";
+    fit += 12;
+    needScore += 10;
+  }
+
+  if (text.includes("website") || text.includes("contact us")) {
     if (recommended === service || !recommended) recommended = "website";
     need = "Website modernization and stronger conversion flow";
     urgency += 10;
@@ -359,209 +827,101 @@ function buildHeuristicLead(input: {
     urgency_score: Math.min(100, urgency),
     access_score: Math.min(100, access),
     total_score: total,
-    ai_summary: `${input.companyName} appears to be a real prospect sourced from live web search and scored based on website and search-result signals.`,
-    ai_reasoning: `Freshware sourced this company from live public web search results and applied heuristic scoring using visible website and snippet signals.`,
+    ai_summary: `${input.companyName} appears to be a real prospect sourced from live search and scored based on website, contact, app-store, and search-result signals.`,
+    ai_reasoning: `Freshware sourced this company through configured search providers and applied heuristic scoring using visible website and snippet signals.`,
     outreach_angle: `Lead with business value tied to ${need.toLowerCase()}.`,
     first_touch_message: `Hi, I came across ${input.companyName} and noticed what looks like an opportunity around ${need.toLowerCase()}. My team helps businesses improve growth, efficiency, and customer experience through practical ${titleCaseService(recommended)} support. Would you be open to a quick conversation to see if there is a fit?`,
   };
 }
 
-function buildFallbackQueries(input: {
-  mode: string;
-  geography: string;
-  industries: string;
+async function buildLeadRow(input: {
+  accountId: string;
+  userId: string;
+  companyName: string;
+  website: string | null;
   serviceFocus: string;
-  buyerTitles: string;
-  companySizes: string;
-  notes: string;
-  benchmarkCompany?: BenchmarkCompany;
-}) {
-  const geo = safeText(input.geography) || "Houston";
-  const industries = splitList(input.industries || input.benchmarkCompany?.industry || "").slice(0, 4);
-  const primaryIndustry = industries[0] || "small business";
-  const size = safeText(input.companySizes);
-  const service = titleCaseService(input.serviceFocus || "consulting");
-
-  const queries = new Set<string>();
-
-  if (input.mode === "similar_to_company" && input.benchmarkCompany?.name) {
-    queries.add(`${primaryIndustry} company ${geo}`);
-    queries.add(`${primaryIndustry} business ${geo}`);
-    queries.add(`${input.benchmarkCompany.name} competitors ${geo}`);
-  } else if (input.mode === "likely_needs") {
-    queries.add(`${primaryIndustry} ${geo} business`);
-    queries.add(`${primaryIndustry} ${geo} company website`);
-    queries.add(`${primaryIndustry} ${geo} appointment booking company`);
-  } else if (input.mode === "specific_company") {
-    queries.add(`${primaryIndustry} ${geo}`);
-  } else {
-    queries.add(`${primaryIndustry} ${geo} company`);
-    queries.add(`${primaryIndustry} ${geo} business`);
-    queries.add(`${primaryIndustry} ${geo} services`);
-  }
-
-  if (size) {
-    queries.add(`${primaryIndustry} ${geo} ${size} company`);
-  }
-
-  if (service) {
-    queries.add(`${primaryIndustry} ${geo}`);
-  }
-
-  return Array.from(queries).slice(0, 6);
-}
-
-async function buildQueriesWithAI(input: {
-  mode: string;
-  geography: string;
+  snippet: string;
+  websiteText: string;
+  homeHtml: string;
+  homeText: string;
+  source: string;
+  sourceType: string;
+  sourceLabel: string;
+  sourceUrl: string | null;
+  sourceSnapshot: string | null;
+  generationMode: string;
   industries: string;
-  serviceFocus: string;
-  buyerTitles: string;
-  companySizes: string;
-  notes: string;
-  benchmarkCompany?: BenchmarkCompany;
-}) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return buildFallbackQueries(input);
-  }
-
-  try {
-    const prompt = `
-You are building public web search queries to find real business websites for B2B sales prospecting.
-
-Return STRICT JSON only:
-{ "queries": ["q1", "q2", "q3", "q4", "q5"] }
-
-Rules:
-- Queries must try to find real company websites, not articles.
-- Prefer local businesses and organizations.
-- Do not include site:linkedin.com, site:facebook.com, or other social sites.
-- Keep each query short and practical.
-
-Input:
-${JSON.stringify(input, null, 2)}
-    `.trim();
-
-    const res = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_LEAD_QUERY_MODEL || "gpt-5-mini",
-        input: prompt,
-      }),
-    });
-
-    if (!res.ok) {
-      return buildFallbackQueries(input);
-    }
-
-    const data = await res.json().catch(() => null);
-    const outputText =
-      typeof data?.output_text === "string" && data.output_text.trim()
-        ? data.output_text.trim()
-        : "";
-
-    if (!outputText) {
-      return buildFallbackQueries(input);
-    }
-
-    const parsed = JSON.parse(outputText);
-    const queries = Array.isArray(parsed?.queries)
-      ? parsed.queries.map((q: unknown) => safeText(q)).filter(Boolean)
-      : [];
-
-    return queries.length ? queries.slice(0, 6) : buildFallbackQueries(input);
-  } catch {
-    return buildFallbackQueries(input);
-  }
-}
-
-async function searchDuckDuckGo(query: string, perQueryLimit: number): Promise<SearchResult[]> {
-  try {
-    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "FreshwareCompanyDiscovery/1.0",
-        Accept: "text/html,text/plain;q=0.9,*/*;q=0.8",
-      },
-      cache: "no-store",
-      redirect: "follow",
-    });
-
-    if (!res.ok) return [];
-
-    const html = await res.text();
-    const results: SearchResult[] = [];
-
-    const regex =
-      /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<a[^>]*class="result__snippet"[^>]*>|<div[^>]*class="result__snippet"[^>]*>)([\s\S]*?)(?:<\/a>|<\/div>)/gi;
-
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(html)) && results.length < perQueryLimit) {
-      let href = htmlDecode(match[1] || "").trim();
-      const title = stripTags(match[2] || "");
-      const snippet = stripTags(match[3] || "");
-
-      if (href.startsWith("//")) href = `https:${href}`;
-
-      try {
-        const maybe = new URL(href);
-        const uddg = maybe.searchParams.get("uddg");
-        if (uddg) href = decodeURIComponent(uddg);
-      } catch {
-        // ignore
-      }
-
-      const domain = getDomain(href);
-      if (!domain) continue;
-      if (isExcludedDomain(domain)) continue;
-
-      results.push({
-        title,
-        url: href,
-        snippet,
-        domain,
-        query,
-      });
-    }
-
-    return results;
-  } catch {
-    return [];
-  }
-}
-
-async function discoverRealCompanies(input: {
-  mode: string;
   geography: string;
-  industries: string;
-  serviceFocus: string;
-  buyerTitles: string;
-  companySizes: string;
-  notes: string;
-  benchmarkCompany?: BenchmarkCompany;
-  limit: number;
+  rawImportRow?: string | null;
+  parseConfidence?: number;
 }) {
-  const queries = await buildQueriesWithAI(input);
-  const allResults = await Promise.all(
-    queries.map((query: string) =>
-      searchDuckDuckGo(query, Math.max(6, Math.ceil(input.limit / 2)))
-    )
-  );
-  const flat = allResults.flat();
+  const website = input.website ? normalizeWebsite(input.website) : null;
+  const contactIntel = website
+    ? await fetchContactIntel(website, input.homeHtml, input.homeText)
+    : { emails: [], phones: [], contactPageUrl: null, combinedText: input.websiteText, combinedHtml: "" };
 
-  const deduped = new Map<string, SearchResult>();
-  for (const result of flat) {
-    if (!deduped.has(result.domain)) {
-      deduped.set(result.domain, result);
-    }
-  }
+  const signals = website ? detectSignals(contactIntel.combinedHtml, contactIntel.combinedText, website) : null;
+  const appStore = await searchAppStores(input.companyName);
 
-  return Array.from(deduped.values()).slice(0, input.limit);
+  const ai = buildHeuristicLead({
+    companyName: input.companyName,
+    website,
+    serviceFocus: input.serviceFocus,
+    snippet: input.snippet,
+    websiteText: contactIntel.combinedText || input.websiteText,
+  });
+
+  return {
+    account_id: input.accountId,
+    company_name: input.companyName,
+    website,
+    contact_email: contactIntel.emails[0] || null,
+    contact_phone: contactIntel.phones[0] || null,
+    discovered_emails: contactIntel.emails,
+    discovered_phones: contactIntel.phones,
+    contact_page_url: contactIntel.contactPageUrl,
+    industry: toNullable(input.industries),
+    city: toNullable(input.geography),
+    source: input.source,
+    source_type: input.sourceType,
+    source_label: input.sourceLabel,
+    source_url: input.sourceUrl || website,
+    source_snapshot: input.sourceSnapshot,
+    generation_mode: input.generationMode,
+    detected_need: ai.detected_need,
+    recommended_service_line: ai.recommended_service_line,
+    fit_score: ai.fit_score,
+    need_score: ai.need_score,
+    urgency_score: ai.urgency_score,
+    access_score: Math.min(100, ai.access_score + (contactIntel.emails.length || contactIntel.phones.length ? 10 : 0)),
+    total_score: ai.total_score,
+    ai_score: ai.total_score,
+    ai_summary: ai.ai_summary,
+    ai_reasoning: ai.ai_reasoning,
+    outreach_angle: ai.outreach_angle,
+    first_touch_message: ai.first_touch_message,
+    website_analysis: {
+      digital_maturity: signals?.likelyOutdated ? "low" : "medium",
+      detected_signals: signals,
+      search_provider: input.sourceType,
+      contact_page_url: contactIntel.contactPageUrl,
+      discovered_emails: contactIntel.emails,
+      discovered_phones: contactIntel.phones,
+      app_store: appStore,
+    },
+    website_analyzed_at: website ? new Date().toISOString() : null,
+    website_analysis_model: website ? "multi_search_heuristic_live_web" : null,
+    raw_import_row: input.rawImportRow || null,
+    created_by: input.userId,
+    status: "new",
+    tags: ["real_company_data", input.generationMode, input.sourceType],
+    parse_confidence: input.parseConfidence ?? 0.9,
+    apple_app_store_url: appStore.apple_app_store_url,
+    google_play_url: appStore.google_play_url,
+    has_ios_app: appStore.has_ios_app,
+    has_android_app: appStore.has_android_app,
+    app_store_checked_at: new Date().toISOString(),
+  };
 }
 
 export async function POST(req: Request) {
@@ -587,11 +947,11 @@ export async function POST(req: Request) {
     const sourceUrlInput = safeText(body?.sourceUrl);
     const candidateInput = safeText(body?.candidateInput);
     const limit = Math.max(1, Math.min(100, Number(body?.limit || 25)));
-
     const accountId = profile.account_id;
 
     let benchmarkCompany: BenchmarkCompany = null;
     const lookalikeCompanyId = safeText(body?.lookalikeCompanyId);
+
     if (mode === "similar_to_company" && lookalikeCompanyId) {
       const { data } = await supabase
         .from("companies")
@@ -607,6 +967,7 @@ export async function POST(req: Request) {
 
     if (mode === "business_lists") {
       const parsedRows = parseBusinessListBlock(candidateInput);
+
       if (!parsedRows.length) {
         return NextResponse.json(
           { error: "Add at least one business listing block." },
@@ -615,62 +976,34 @@ export async function POST(req: Request) {
       }
 
       for (const row of parsedRows.slice(0, limit)) {
-        const fetched = row.website ? await fetchWebsiteText(row.website) : null;
-        const signals = fetched ? detectSignals(fetched.html, fetched.text, row.website || "") : null;
-        const emails = fetched ? extractEmails(`${fetched.html}\n${fetched.text}`) : [];
-        const phones = fetched ? extractPhones(`${fetched.html}\n${fetched.text}`) : [];
+        const website = row.website;
+        const fetched = website ? await fetchWebsiteText(website) : { ok: false, html: "", text: "" };
 
-        const ai = buildHeuristicLead({
+        const leadRow = await buildLeadRow({
+          accountId,
+          userId: user.id,
           companyName: row.company_name,
-          website: row.website,
+          website,
           serviceFocus,
           snippet: row.raw,
-          websiteText: fetched?.text || "",
+          websiteText: fetched.text || "",
+          homeHtml: fetched.html || "",
+          homeText: fetched.text || "",
+          source: "business_lists",
+          sourceType: "directory",
+          sourceLabel: sourceLabelInput || "Business List Import",
+          sourceUrl: sourceUrlInput || website,
+          sourceSnapshot: row.raw,
+          generationMode: mode,
+          industries,
+          geography,
+          rawImportRow: row.raw,
+          parseConfidence: 0.85,
         });
 
-        rows.push({
-          account_id: accountId,
-          company_name: row.company_name,
-          website: row.website,
-          contact_email: row.email || emails[0] || null,
-          contact_phone: row.phone || phones[0] || null,
-          discovered_emails: emails,
-          discovered_phones: phones,
-          industry: toNullable(industries),
-          city: toNullable(geography),
-          source: "business_lists",
-          source_type: "directory",
-          source_label: sourceLabelInput || "Business List Import",
-          source_url: sourceUrlInput || row.website || null,
-          source_snapshot: row.raw,
-          generation_mode: mode,
-          detected_need: ai.detected_need,
-          recommended_service_line: ai.recommended_service_line,
-          fit_score: ai.fit_score,
-          need_score: ai.need_score,
-          urgency_score: ai.urgency_score,
-          access_score: ai.access_score,
-          total_score: ai.total_score,
-          ai_score: ai.total_score,
-          ai_summary: ai.ai_summary,
-          ai_reasoning: ai.ai_reasoning,
-          outreach_angle: ai.outreach_angle,
-          first_touch_message: ai.first_touch_message,
-          website_analysis: signals
-            ? {
-                digital_maturity: signals.likelyOutdated ? "low" : "medium",
-                fetched_from_directory_seed: true,
-                detected_signals: signals,
-              }
-            : null,
-          website_analyzed_at: fetched?.ok ? new Date().toISOString() : null,
-          website_analysis_model: fetched?.ok ? "heuristic_live_web" : null,
-          raw_import_row: row.raw,
-          created_by: user.id,
-          status: "new",
-          tags: ["business_list", "real_company_data"],
-          parse_confidence: 0.85,
-        });
+        leadRow.contact_email = row.email || leadRow.contact_email;
+        leadRow.contact_phone = row.phone || leadRow.contact_phone;
+        rows.push(leadRow);
       }
     } else if (mode === "specific_company") {
       const companyName = safeText(body?.companyName);
@@ -683,61 +1016,31 @@ export async function POST(req: Request) {
         );
       }
 
-      const fetched = website ? await fetchWebsiteText(website) : null;
-      const signals = fetched ? detectSignals(fetched.html, fetched.text, website || "") : null;
-      const emails = fetched ? extractEmails(`${fetched.html}\n${fetched.text}`) : [];
-      const phones = fetched ? extractPhones(`${fetched.html}\n${fetched.text}`) : [];
+      const fetched = website ? await fetchWebsiteText(website) : { ok: false, html: "", text: "" };
 
-      const ai = buildHeuristicLead({
-        companyName: companyName || website || "Unnamed Company",
-        website,
-        serviceFocus,
-        snippet: notes,
-        websiteText: fetched?.text || "",
-      });
-
-      rows.push({
-        account_id: accountId,
-        company_name: companyName || website || "Unnamed Company",
-        website,
-        contact_email: emails[0] || null,
-        contact_phone: phones[0] || null,
-        discovered_emails: emails,
-        discovered_phones: phones,
-        industry: toNullable(industries),
-        city: toNullable(geography),
-        source: "specific_company",
-        source_type: "web_search",
-        source_label: "Specific Company Analysis",
-        source_url: website || null,
-        source_snapshot: [companyName, website, notes].filter(Boolean).join(" | "),
-        generation_mode: mode,
-        detected_need: ai.detected_need,
-        recommended_service_line: ai.recommended_service_line,
-        fit_score: ai.fit_score,
-        need_score: ai.need_score,
-        urgency_score: ai.urgency_score,
-        access_score: ai.access_score,
-        total_score: ai.total_score,
-        ai_score: ai.total_score,
-        ai_summary: ai.ai_summary,
-        ai_reasoning: ai.ai_reasoning,
-        outreach_angle: ai.outreach_angle,
-        first_touch_message: ai.first_touch_message,
-        website_analysis: signals
-          ? {
-              digital_maturity: signals.likelyOutdated ? "low" : "medium",
-              detected_signals: signals,
-            }
-          : null,
-        website_analyzed_at: fetched?.ok ? new Date().toISOString() : null,
-        website_analysis_model: fetched?.ok ? "heuristic_live_web" : null,
-        raw_import_row: null,
-        created_by: user.id,
-        status: "new",
-        tags: ["specific_company", "real_company_data"],
-        parse_confidence: 1,
-      });
+      rows.push(
+        await buildLeadRow({
+          accountId,
+          userId: user.id,
+          companyName: companyName || website || "Unnamed Company",
+          website,
+          serviceFocus,
+          snippet: notes,
+          websiteText: fetched.text || "",
+          homeHtml: fetched.html || "",
+          homeText: fetched.text || "",
+          source: "specific_company",
+          sourceType: "web_search",
+          sourceLabel: "Specific Company Analysis",
+          sourceUrl: website,
+          sourceSnapshot: [companyName, website, notes].filter(Boolean).join(" | "),
+          generationMode: mode,
+          industries,
+          geography,
+          rawImportRow: null,
+          parseConfidence: 1,
+        })
+      );
     } else {
       const realResults = await discoverRealCompanies({
         mode,
@@ -755,7 +1058,7 @@ export async function POST(req: Request) {
         return NextResponse.json(
           {
             error:
-              "No real companies were found from live public web search. Try a narrower industry + geography combination, or use Business Lists / CSV import.",
+              "No real companies were found. Check that at least one search API key is active in Vercel, then try a narrower industry and geography.",
           },
           { status: 404 }
         );
@@ -763,82 +1066,57 @@ export async function POST(req: Request) {
 
       for (const result of realResults) {
         const fetched = await fetchWebsiteText(result.url);
-        const signals = detectSignals(fetched.html, fetched.text, result.url);
-        const emails = extractEmails(`${fetched.html}\n${fetched.text}\n${result.snippet}`);
-        const phones = extractPhones(`${fetched.html}\n${fetched.text}\n${result.snippet}`);
-
         const companyName = cleanCompanyName(result.title, result.domain);
 
-        const ai = buildHeuristicLead({
-          companyName,
-          website: result.url,
-          serviceFocus,
-          snippet: result.snippet,
-          websiteText: fetched.text,
-        });
-
-        rows.push({
-          account_id: accountId,
-          company_name: companyName,
-          website: result.url,
-          contact_email: emails[0] || null,
-          contact_phone: phones[0] || null,
-          discovered_emails: emails,
-          discovered_phones: phones,
-          industry: toNullable(industries),
-          city: toNullable(geography),
-          source: "live_web_search",
-          source_type: "web_search",
-          source_label:
-            mode === "similar_to_company"
-              ? "Live Lookalike Search"
-              : mode === "likely_needs"
-              ? "Live Likely Needs Search"
-              : "Live Ideal Customer Search",
-          source_url: result.url,
-          source_snapshot: `Query: ${result.query} | Title: ${result.title} | Snippet: ${result.snippet}`,
-          generation_mode: mode,
-          detected_need: ai.detected_need,
-          recommended_service_line: ai.recommended_service_line,
-          fit_score: ai.fit_score,
-          need_score: ai.need_score,
-          urgency_score: ai.urgency_score,
-          access_score: ai.access_score,
-          total_score: ai.total_score,
-          ai_score: ai.total_score,
-          ai_summary: ai.ai_summary,
-          ai_reasoning: ai.ai_reasoning,
-          outreach_angle: ai.outreach_angle,
-          first_touch_message: ai.first_touch_message,
-          website_analysis: {
-            digital_maturity: signals.likelyOutdated ? "low" : "medium",
-            detected_signals: signals,
-            search_query: result.query,
-            search_snippet: result.snippet,
-            domain: result.domain,
-          },
-          website_analyzed_at: fetched.ok ? new Date().toISOString() : null,
-          website_analysis_model: "heuristic_live_web",
-          raw_import_row: null,
-          created_by: user.id,
-          status: "new",
-          tags: ["real_company_data", "live_web_search", mode],
-          parse_confidence: 0.88,
-        });
+        rows.push(
+          await buildLeadRow({
+            accountId,
+            userId: user.id,
+            companyName,
+            website: result.url,
+            serviceFocus,
+            snippet: result.snippet,
+            websiteText: fetched.text || "",
+            homeHtml: fetched.html || "",
+            homeText: fetched.text || "",
+            source: "live_web_search",
+            sourceType: result.provider || "web_search",
+            sourceLabel:
+              mode === "similar_to_company"
+                ? "Live Lookalike Search"
+                : mode === "likely_needs"
+                ? "Live Likely Needs Search"
+                : "Live Ideal Customer Search",
+            sourceUrl: result.url,
+            sourceSnapshot: `Provider: ${result.provider} | Query: ${result.query} | Title: ${result.title} | Snippet: ${result.snippet}`,
+            generationMode: mode,
+            industries,
+            geography,
+            rawImportRow: null,
+            parseConfidence: 0.9,
+          })
+        );
       }
     }
 
     const deduped = new Map<string, Record<string, any>>();
+
     for (const row of rows) {
       const key =
         normalizeWebsite(row.website || "") ||
         `${String(row.company_name || "").toLowerCase()}::${String(row.city || "").toLowerCase()}`;
-      if (!deduped.has(key)) {
-        deduped.set(key, row);
-      }
+
+      if (!deduped.has(key)) deduped.set(key, row);
     }
 
     const finalRows = Array.from(deduped.values()).slice(0, limit);
+
+    if (!finalRows.length) {
+      return NextResponse.json(
+        { error: "No valid lead rows were created from the search results." },
+        { status: 400 }
+      );
+    }
 
     const { data, error } = await supabase
       .from("lead_prospects")
@@ -855,6 +1133,7 @@ export async function POST(req: Request) {
       leads: data || [],
       source_mode: mode,
       real_data: true,
+      search_stack: ["brave", "serpapi", "bing", "google_cse", "duckduckgo"],
     });
   } catch (error) {
     console.error("POST /api/lead-prospects/generate error:", error);

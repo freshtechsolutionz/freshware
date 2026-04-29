@@ -37,7 +37,10 @@ type SavedViewValue =
   | "draft_ready"
   | "sent"
   | "manual_send_required"
-  | "responded";
+  | "responded"
+  | "has_ios_app"
+  | "has_android_app"
+  | "no_app_found";
 
 function toArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((v) => String(v)).filter(Boolean) : [];
@@ -46,15 +49,6 @@ function toArray(value: unknown): string[] {
 function pretty(value: unknown) {
   const text = String(value ?? "").trim();
   return text || "N/A";
-}
-
-function money(value: unknown) {
-  const n = Number(value || 0);
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(n);
 }
 
 function fmtDate(value: unknown) {
@@ -115,17 +109,34 @@ function hasLeadContact(lead: LeadRow | null | undefined) {
 function titleForMode(mode: ModeValue) {
   switch (mode) {
     case "ideal_customer":
-      return "Ideal Customer Search";
+      return "Find Ideal Customers";
     case "similar_to_company":
-      return "Similar to an Existing Company";
+      return "Find Lookalike Companies";
     case "likely_needs":
-      return "Find Companies with Likely Needs";
+      return "Find Companies With Likely Needs";
     case "specific_company":
-      return "Analyze a Specific Company";
+      return "Research One Company";
     case "business_lists":
-      return "Source from Business Lists";
+      return "Import From Business Lists";
     default:
       return "Lead Generation";
+  }
+}
+
+function helpForMode(mode: ModeValue) {
+  switch (mode) {
+    case "ideal_customer":
+      return "Use this when you know the type of company, industry, location, and buyer you want.";
+    case "similar_to_company":
+      return "Use this when you want more companies like one already saved in Freshware.";
+    case "likely_needs":
+      return "Use this when you want companies that show signs they need websites, apps, AI, automation, or support.";
+    case "specific_company":
+      return "Use this when you already know the company and want Freshware to research it.";
+    case "business_lists":
+      return "Use this when you have copied listings from a chamber, directory, association, or business list.";
+    default:
+      return "Choose the best lead sourcing workflow.";
   }
 }
 
@@ -152,6 +163,15 @@ function statusChipClass(status: string) {
   return "border-gray-200 bg-gray-50 text-gray-700";
 }
 
+function appStatusLabel(lead: LeadRow | null | undefined) {
+  if (!lead) return "N/A";
+  if (lead.has_ios_app && lead.has_android_app) return "iOS + Android app found";
+  if (lead.has_ios_app) return "iOS app found";
+  if (lead.has_android_app) return "Android app found";
+  if (lead.app_store_checked_at) return "No app found";
+  return "Not checked yet";
+}
+
 export default function LeadGenerationClient({
   leads = [],
   companies = [],
@@ -167,8 +187,8 @@ export default function LeadGenerationClient({
   const [mode, setMode] = useState<ModeValue>("ideal_customer");
   const [savedView, setSavedView] = useState<SavedViewValue>("all");
 
-  const [serviceFocus, setServiceFocus] = useState("");
-  const [geography, setGeography] = useState("");
+  const [serviceFocus, setServiceFocus] = useState("mobile_app");
+  const [geography, setGeography] = useState("Houston, Texas");
   const [industries, setIndustries] = useState("");
   const [companySizes, setCompanySizes] = useState("");
   const [buyerTitles, setBuyerTitles] = useState("");
@@ -215,6 +235,9 @@ export default function LeadGenerationClient({
   const [submitting, setSubmitting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
   const [draftSaving, setDraftSaving] = useState(false);
   const [sendSaving, setSendSaving] = useState(false);
   const [manualSentSaving, setManualSentSaving] = useState(false);
@@ -247,22 +270,22 @@ export default function LeadGenerationClient({
       const notContacted = outreachStatus === "NOT_CONTACTED";
 
       if (statusFilter !== "all" && outreachStatus !== statusFilter.toUpperCase()) return false;
+
       if (
         serviceFilter !== "all" &&
         String(lead.recommended_service_line || "").toLowerCase() !== serviceFilter.toLowerCase()
       ) {
         return false;
       }
+
       if (
         sourceTypeFilter !== "all" &&
         String(lead.source_type || "").toLowerCase() !== sourceTypeFilter.toLowerCase()
       ) {
         return false;
       }
-      if (
-        sourceLabelFilter !== "all" &&
-        String(lead.source_label || "") !== sourceLabelFilter
-      ) {
+
+      if (sourceLabelFilter !== "all" && String(lead.source_label || "") !== sourceLabelFilter) {
         return false;
       }
 
@@ -272,6 +295,7 @@ export default function LeadGenerationClient({
 
       if (savedView === "manual_leads" && String(lead.source_type || "") !== "manual") return false;
       if (savedView === "not_contacted" && !notContacted) return false;
+
       if (
         savedView === "website_opportunities" &&
         !(
@@ -281,6 +305,7 @@ export default function LeadGenerationClient({
       ) {
         return false;
       }
+
       if (savedView === "analyzed_leads" && !lead.website_analyzed_at) return false;
       if (savedView === "converted" && !lead.converted_company_id && !lead.converted_opportunity_id) return false;
       if (savedView === "new_this_week" && !isThisWeek(lead.created_at)) return false;
@@ -292,6 +317,9 @@ export default function LeadGenerationClient({
       if (savedView === "sent" && !(lastStatus === "SENT" || lastStatus === "SENT_MANUAL")) return false;
       if (savedView === "manual_send_required" && lastStatus !== "MANUAL_SEND_REQUIRED") return false;
       if (savedView === "responded" && outreachStatus !== "RESPONDED") return false;
+      if (savedView === "has_ios_app" && !lead.has_ios_app) return false;
+      if (savedView === "has_android_app" && !lead.has_android_app) return false;
+      if (savedView === "no_app_found" && (lead.has_ios_app || lead.has_android_app || !lead.app_store_checked_at)) return false;
 
       const q = search.trim().toLowerCase();
       if (!q) return true;
@@ -306,6 +334,8 @@ export default function LeadGenerationClient({
         lead.contact_title,
         lead.contact_email,
         lead.contact_phone,
+        lead.apple_app_store_url,
+        lead.google_play_url,
         ...toArray(lead.discovered_emails),
         ...toArray(lead.discovered_phones),
         lead.source_label,
@@ -329,95 +359,101 @@ export default function LeadGenerationClient({
     scoreFilter,
     savedView,
   ]);
-
-  const selectedLead =
-    filteredLeads.find((lead) => lead.id === selectedLeadId) ||
-    safeLeads.find((lead) => lead.id === selectedLeadId) ||
-    filteredLeads[0] ||
-    safeLeads[0] ||
-    null;
+    const selectedLead = useMemo(() => {
+    return filteredLeads.find((lead) => String(lead.id) === selectedLeadId) || null;
+  }, [filteredLeads, selectedLeadId]);
 
   useEffect(() => {
-    if (!selectedLeadId && (filteredLeads[0]?.id || safeLeads[0]?.id)) {
-      setSelectedLeadId(filteredLeads[0]?.id || safeLeads[0]?.id || "");
+    if (!filteredLeads.length) {
+      setSelectedLeadId("");
+      return;
     }
-  }, [filteredLeads, safeLeads, selectedLeadId]);
+
+    if (!selectedLeadId) {
+      setSelectedLeadId(String(filteredLeads[0].id));
+      return;
+    }
+
+    const exists = filteredLeads.some((lead) => String(lead.id) === selectedLeadId);
+
+    if (!exists) {
+      setSelectedLeadId(String(filteredLeads[0].id));
+    }
+  }, [filteredLeads, selectedLeadId]);
 
   useEffect(() => {
-    setOutreachNotes(selectedLead?.outreach_notes || "");
-    setFollowUpDate(toDateInputValue(selectedLead?.next_follow_up_at));
-    setFollowUpStatus(String(selectedLead?.follow_up_status || "NONE"));
-    setFollowUpNotes(selectedLead?.follow_up_notes || "");
+    if (!selectedLead) return;
 
-    const fallbackRecipient =
-      selectedLead?.preferred_outreach_email ||
-      selectedLead?.contact_email ||
-      toArray(selectedLead?.discovered_emails)[0] ||
-      "";
+    setRecipientEmail(
+      selectedLead.preferred_outreach_email ||
+        selectedLead.contact_email ||
+        toArray(selectedLead.discovered_emails)[0] ||
+        ""
+    );
 
-    setRecipientEmail(fallbackRecipient);
-    setOutreachSubject(selectedLead?.outreach_subject || "");
-    setOutreachDraft(selectedLead?.outreach_draft || selectedLead?.first_touch_message || "");
-    setReplyEmail(fallbackRecipient);
-    setReplyMessage("");
-    setOutcomeNotes(selectedLead?.source_feedback_notes || "");
-  }, [selectedLead?.id]);
+    setOutreachSubject(selectedLead.outreach_subject || "");
+    setOutreachDraft(selectedLead.outreach_draft || "");
+    setOutreachNotes(selectedLead.outreach_notes || "");
+
+    setFollowUpDate(toDateInputValue(selectedLead.next_follow_up_at));
+    setFollowUpStatus(selectedLead.follow_up_status || "NONE");
+    setFollowUpNotes(selectedLead.follow_up_notes || "");
+
+    setOutcomeNotes(selectedLead.source_feedback_notes || "");
+  }, [selectedLead]);
 
   useEffect(() => {
+    if (!selectedLeadId) return;
+
+    let cancelled = false;
+
     async function loadEvents() {
-      if (!selectedLead?.id) {
-        setEvents([]);
-        return;
-      }
-
       try {
         setLoadingEvents(true);
-        const res = await fetch(`/api/lead-prospects/${selectedLead.id}/outreach-events`);
+
+        const res = await fetch(
+          `/api/lead-prospects/${selectedLeadId}/outreach-events`,
+          {
+            cache: "no-store",
+          }
+        );
+
         const json = await res.json().catch(() => ({}));
+
         if (!res.ok) {
-          throw new Error(json?.error || "Failed to load outreach history");
+          throw new Error(json?.error || "Failed to load outreach events.");
         }
-        setEvents(Array.isArray(json?.events) ? json.events : []);
-      } catch {
-        setEvents([]);
+
+        if (!cancelled) {
+          setEvents(Array.isArray(json?.events) ? json.events : []);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          console.error(err);
+        }
       } finally {
-        setLoadingEvents(false);
+        if (!cancelled) {
+          setLoadingEvents(false);
+        }
       }
     }
 
     loadEvents();
-  }, [selectedLead?.id]);
 
-  const leadsWithWebsites = useMemo(
-    () => safeLeads.filter((lead) => String(lead.website || "").trim()),
-    [safeLeads]
-  );
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLeadId]);
 
-  const analyzedCount = useMemo(
-    () => safeLeads.filter((lead) => lead.website_analyzed_at).length,
-    [safeLeads]
-  );
+  async function refreshPage() {
+    window.location.reload();
+  }
 
-  const score80Count = useMemo(
-    () => safeLeads.filter((lead) => Number(lead.total_score || 0) >= 80).length,
-    [safeLeads]
-  );
-
-  const directoryLeadCount = useMemo(
-    () => safeLeads.filter((lead) => String(lead.source_type || "") === "directory").length,
-    [safeLeads]
-  );
-
-  const contactFoundCount = useMemo(
-    () => safeLeads.filter((lead) => hasLeadContact(lead)).length,
-    [safeLeads]
-  );
-
-  async function handleGenerate() {
+  async function handleFindLeads() {
     try {
       setSubmitting(true);
-      setError("");
       setSuccess("");
+      setError("");
 
       const payload: Record<string, any> = {
         mode,
@@ -447,512 +483,684 @@ export default function LeadGenerationClient({
 
       const res = await fetch("/api/lead-prospects/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify(payload),
       });
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to generate leads");
+        throw new Error(json?.error || "Lead generation failed.");
       }
 
-      setSuccess(`Generated ${json?.count || 0} lead prospect(s).`);
-      window.location.reload();
+      setSuccess(`Successfully generated ${json?.count || 0} leads.`);
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to generate leads");
+      setError(err?.message || "Lead generation failed.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleAnalyzeLeads() {
+    try {
+      setAnalyzing(true);
+      setSuccess("");
+      setError("");
+
+      const res = await fetch("/api/lead-prospects/analyze-websites", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          limit: Number(analyzeLimit || 25),
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Website analysis failed.");
+      }
+
+      setSuccess(`Successfully analyzed ${json?.analyzed || 0} leads.`);
+      await refreshPage();
+    } catch (err: any) {
+      setError(err?.message || "Website analysis failed.");
+    } finally {
+      setAnalyzing(false);
     }
   }
 
   async function handleImportCsv() {
     try {
       setImporting(true);
-      setError("");
       setSuccess("");
+      setError("");
 
       const res = await fetch("/api/lead-prospects/import", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csvText, source: importSource, serviceFocus }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          csvText,
+          sourceType: importSource,
+        }),
       });
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to import CSV");
+        throw new Error(json?.error || "CSV import failed.");
       }
 
-      setSuccess(`Imported ${json?.count || 0} lead prospect(s).`);
-      window.location.reload();
+      setSuccess(`Successfully imported ${json?.count || 0} leads.`);
+      setCsvText("");
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to import CSV");
+      setError(err?.message || "CSV import failed.");
     } finally {
       setImporting(false);
     }
   }
 
-  async function handleAnalyzeWebsites() {
-    try {
-      setAnalyzing(true);
-      setError("");
-      setSuccess("");
+  async function handleDeleteLead(id: string) {
+    const confirmed = window.confirm(
+      "Are you sure you want to permanently delete this lead?"
+    );
 
-      const res = await fetch("/api/lead-prospects/analyze-websites", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limit: Number(analyzeLimit || 25) }),
+    if (!confirmed) return;
+
+    try {
+      setDeleting(true);
+      setSuccess("");
+      setError("");
+
+      const res = await fetch(`/api/lead-prospects/${id}/delete`, {
+        method: "DELETE",
       });
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to analyze websites");
+        throw new Error(json?.error || "Delete failed.");
       }
 
-      setSuccess(`Analyzed ${json?.analyzed || 0} website(s).`);
-      window.location.reload();
+      setSuccess("Lead deleted successfully.");
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to analyze websites");
+      setError(err?.message || "Delete failed.");
     } finally {
-      setAnalyzing(false);
+      setDeleting(false);
     }
   }
 
-  async function generateOutreach() {
-    if (!selectedLead?.id) return;
+  async function handleBulkDeleteVisible() {
+    if (!filteredLeads.length) return;
+
+    const confirmed = window.confirm(
+      `Delete all ${filteredLeads.length} visible leads? This cannot be undone.`
+    );
+
+    if (!confirmed) return;
 
     try {
-      setDraftSaving(true);
-      setError("");
+      setBulkDeleting(true);
       setSuccess("");
-
-      const res = await fetch(`/api/lead-prospects/${selectedLead.id}/generate-outreach`, {
-        method: "POST",
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(json?.error || "Failed to generate outreach");
-      }
-
-      setSuccess("Outreach draft generated.");
-      window.location.reload();
-    } catch (err: any) {
-      setError(err?.message || "Failed to generate outreach");
-    } finally {
-      setDraftSaving(false);
-    }
-  }
-
-  async function generateFollowUp() {
-    if (!selectedLead?.id) return;
-
-    try {
-      setDraftSaving(true);
       setError("");
-      setSuccess("");
 
-      const res = await fetch(`/api/lead-prospects/${selectedLead.id}/generate-followup`, {
+      const res = await fetch("/api/lead-prospects/bulk-delete", {
         method: "POST",
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(json?.error || "Failed to generate follow-up");
-      }
-
-      setSuccess("Follow-up generated.");
-      window.location.reload();
-    } catch (err: any) {
-      setError(err?.message || "Failed to generate follow-up");
-    } finally {
-      setDraftSaving(false);
-    }
-  }
-
-  async function saveOutreachStatus() {
-    if (!selectedLead?.id) return;
-
-    try {
-      setOutreachSaving(true);
-      setError("");
-      setSuccess("");
-
-      const res = await fetch(`/api/lead-prospects/${selectedLead.id}/update-outreach`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
-          status: selectedLead?.outreach_status || "NOT_CONTACTED",
-          notes: outreachNotes,
+          ids: filteredLeads.map((lead) => String(lead.id)),
         }),
       });
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to save outreach status");
+        throw new Error(json?.error || "Bulk delete failed.");
       }
 
-      setSuccess("Outreach status updated.");
-      window.location.reload();
+      setSuccess(`Deleted ${json?.deleted_count || 0} leads.`);
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to save outreach status");
+      setError(err?.message || "Bulk delete failed.");
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  async function handleGenerateOutreach() {
+    if (!selectedLead) return;
+
+    try {
+      setOutreachSaving(true);
+      setSuccess("");
+      setError("");
+
+      const res = await fetch(
+        `/api/lead-prospects/${selectedLead.id}/generate-outreach`,
+        {
+          method: "POST",
+        }
+      );
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to generate outreach.");
+      }
+
+      setSuccess("Outreach draft generated.");
+      await refreshPage();
+    } catch (err: any) {
+      setError(err?.message || "Failed to generate outreach.");
     } finally {
       setOutreachSaving(false);
     }
   }
 
-  async function saveFollowUp() {
-    if (!selectedLead?.id) return;
+  async function handleSaveDraft() {
+    if (!selectedLead) return;
+
+    try {
+      setDraftSaving(true);
+      setSuccess("");
+      setError("");
+
+      const res = await fetch(
+        `/api/lead-prospects/${selectedLead.id}/update-outreach`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            outreach_subject: outreachSubject,
+            outreach_draft: outreachDraft,
+            outreach_notes: outreachNotes,
+            preferred_outreach_email: recipientEmail,
+          }),
+        }
+      );
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to save draft.");
+      }
+
+      setSuccess("Draft saved.");
+      await refreshPage();
+    } catch (err: any) {
+      setError(err?.message || "Failed to save draft.");
+    } finally {
+      setDraftSaving(false);
+    }
+  }
+
+  async function handleScheduleFollowUp() {
+    if (!selectedLead) return;
 
     try {
       setFollowUpSaving(true);
-      setError("");
       setSuccess("");
+      setError("");
 
-      const next_follow_up_at = followUpDate ? new Date(followUpDate).toISOString() : null;
-
-      const res = await fetch(`/api/lead-prospects/${selectedLead.id}/update-follow-up`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          next_follow_up_at,
-          follow_up_status: followUpStatus,
-          follow_up_notes: followUpNotes,
-        }),
-      });
+      const res = await fetch(
+        `/api/lead-prospects/${selectedLead.id}/update-follow-up`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            next_follow_up_at: followUpDate || null,
+            follow_up_status: followUpStatus,
+            follow_up_notes: followUpNotes,
+          }),
+        }
+      );
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to update follow-up");
+        throw new Error(json?.error || "Failed to save follow-up.");
       }
 
       setSuccess("Follow-up updated.");
-      window.location.reload();
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to update follow-up");
+      setError(err?.message || "Failed to save follow-up.");
     } finally {
       setFollowUpSaving(false);
     }
   }
-
-  async function sendOutreach() {
-    if (!selectedLead?.id) return;
+    async function handleSendOutreach() {
+    if (!selectedLead) return;
 
     try {
       setSendSaving(true);
-      setError("");
       setSuccess("");
+      setError("");
 
-      const res = await fetch(`/api/lead-prospects/${selectedLead.id}/send-outreach`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          recipient_email: recipientEmail,
-          subject: outreachSubject,
-          body: outreachDraft,
-        }),
-      });
+      const res = await fetch(
+        `/api/lead-prospects/${selectedLead.id}/send-outreach`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            recipientEmail,
+            outreachSubject,
+            outreachDraft,
+          }),
+        }
+      );
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to send outreach");
+        throw new Error(json?.error || "Failed to send outreach.");
       }
 
-      if (json?.manual_required && json?.mailto_url) {
-        window.location.href = json.mailto_url;
-        setSuccess("Opened your mail client. After sending, use Mark Email Sent.");
-        return;
-      }
-
-      setSuccess("Outreach sent.");
-      window.location.reload();
+      setSuccess("Outreach email sent.");
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to send outreach");
+      setError(err?.message || "Failed to send outreach.");
     } finally {
       setSendSaving(false);
     }
   }
 
-  async function markEmailSent() {
-    if (!selectedLead?.id) return;
+  async function handleMarkManualSent() {
+    if (!selectedLead) return;
 
     try {
       setManualSentSaving(true);
-      setError("");
       setSuccess("");
+      setError("");
 
-      const res = await fetch(`/api/lead-prospects/${selectedLead.id}/mark-outreach-sent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          recipient_email: recipientEmail,
-          subject: outreachSubject,
-          body: outreachDraft,
-        }),
-      });
+      const res = await fetch(
+        `/api/lead-prospects/${selectedLead.id}/mark-outreach-sent`,
+        {
+          method: "POST",
+        }
+      );
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to mark email sent");
+        throw new Error(json?.error || "Failed to mark outreach.");
       }
 
-      setSuccess("Manual outreach send logged.");
-      window.location.reload();
+      setSuccess("Lead marked as manually contacted.");
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to mark email sent");
+      setError(err?.message || "Failed to mark outreach.");
     } finally {
       setManualSentSaving(false);
     }
   }
 
-  async function logReply() {
-    if (!selectedLead?.id) return;
+  async function handleSaveReply() {
+    if (!selectedLead) return;
 
     try {
       setReplySaving(true);
-      setError("");
       setSuccess("");
+      setError("");
 
-      const res = await fetch(`/api/lead-prospects/${selectedLead.id}/log-reply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: replyMessage,
-          sender_email: replyEmail,
-        }),
-      });
+      const res = await fetch(
+        `/api/lead-prospects/${selectedLead.id}/log-reply`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            replyEmail,
+            replyMessage,
+          }),
+        }
+      );
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to log reply");
+        throw new Error(json?.error || "Failed to save reply.");
       }
 
-      setSuccess("Reply logged.");
-      window.location.reload();
+      setSuccess("Reply saved.");
+      setReplyEmail("");
+      setReplyMessage("");
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to log reply");
+      setError(err?.message || "Failed to save reply.");
     } finally {
       setReplySaving(false);
     }
   }
 
-  async function markOutcome(outcome: "WON" | "LOST" | "NO_RESPONSE") {
-    if (!selectedLead?.id) return;
+  async function handleSaveOutcome(outcome: string) {
+    if (!selectedLead) return;
 
     try {
       setOutcomeSaving(true);
-      setError("");
       setSuccess("");
+      setError("");
 
-      const res = await fetch(`/api/lead-prospects/${selectedLead.id}/mark-outcome`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          outcome,
-          notes: outcomeNotes,
-        }),
-      });
+      const res = await fetch(
+        `/api/lead-prospects/${selectedLead.id}/mark-outcome`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            outcome,
+            notes: outcomeNotes,
+          }),
+        }
+      );
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to mark outcome");
+        throw new Error(json?.error || "Failed to save outcome.");
       }
 
-      setSuccess(`Lead marked ${outcome}.`);
-      window.location.reload();
+      setSuccess(`Lead marked as ${outcome.toLowerCase()}.`);
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to mark outcome");
+      setError(err?.message || "Failed to save outcome.");
     } finally {
       setOutcomeSaving(false);
     }
   }
 
-  async function convertLead(createOpportunity: boolean) {
-    if (!selectedLead?.id) return;
+  async function handleConvertLead() {
+    if (!selectedLead) return;
 
     try {
       setConvertSaving(true);
-      setError("");
       setSuccess("");
+      setError("");
 
-      const res = await fetch(`/api/lead-prospects/${selectedLead.id}/convert`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          createCompany: true,
-          createOpportunity,
-        }),
-      });
+      const res = await fetch(
+        `/api/lead-prospects/${selectedLead.id}/convert`,
+        {
+          method: "POST",
+        }
+      );
 
       const json = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to convert lead");
+        throw new Error(json?.error || "Lead conversion failed.");
       }
 
-      setSuccess(
-        createOpportunity
-          ? "Lead converted into company + opportunity."
-          : "Lead converted into company profile."
-      );
-      window.location.reload();
+      setSuccess("Lead converted successfully.");
+      await refreshPage();
     } catch (err: any) {
-      setError(err?.message || "Failed to convert lead");
+      setError(err?.message || "Lead conversion failed.");
     } finally {
       setConvertSaving(false);
     }
   }
 
-  async function handleCsvFile(file: File) {
-    try {
-      const text = await file.text();
-      setCsvText(text);
-      setSuccess(`Loaded file: ${file.name}`);
-      setError("");
-    } catch {
-      setError("Could not read CSV file.");
-    }
-  }
-
-  const showLookalikeFields = mode === "similar_to_company";
-  const showIdealCustomerFields = mode === "ideal_customer";
-  const showNeedsFields = mode === "likely_needs";
-  const showSpecificFields = mode === "specific_company";
-  const showBusinessListFields = mode === "business_lists";
-
-  const discoveredEmails = toArray(selectedLead?.discovered_emails);
-  const discoveredPhones = toArray(selectedLead?.discovered_phones);
-
   return (
-    <div className="space-y-6 pb-10">
-      <div className="grid gap-6 xl:grid-cols-12">
-        <div className="space-y-6 xl:col-span-4">
-          <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-            <div className="text-xl font-semibold text-gray-900">{titleForMode(mode)}</div>
-            <div className="mt-1 text-sm text-gray-500">
-              Build lead lists in a way that matches how you actually think about prospecting.
+    <div className="space-y-6">
+      <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-2">
+            <div className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+              AI Lead Intelligence Engine
+            </div>
+
+            <h1 className="text-3xl font-bold tracking-tight text-zinc-900">
+              Freshware Lead Generation
+            </h1>
+
+            <p className="max-w-3xl text-sm leading-6 text-zinc-600">
+              Find real businesses, analyze their websites, detect likely technology
+              opportunities, discover contact information, identify mobile apps,
+              generate outreach, and convert leads into opportunities.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 lg:min-w-[320px]">
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Total Leads
+              </div>
+
+              <div className="mt-2 text-3xl font-bold text-zinc-900">
+                {safeLeads.length}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Filtered Leads
+              </div>
+
+              <div className="mt-2 text-3xl font-bold text-zinc-900">
+                {filteredLeads.length}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Contact Info Found
+              </div>
+
+              <div className="mt-2 text-3xl font-bold text-zinc-900">
+                {
+                  safeLeads.filter((lead) => hasLeadContact(lead)).length
+                }
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Mobile Apps Found
+              </div>
+
+              <div className="mt-2 text-3xl font-bold text-zinc-900">
+                {
+                  safeLeads.filter(
+                    (lead) => lead.has_ios_app || lead.has_android_app
+                  ).length
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {success ? (
+          <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            {success}
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[420px,1fr]">
+        <div className="space-y-6">
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold text-zinc-900">
+                Step 1: Choose Lead Workflow
+              </h2>
+
+              <p className="text-sm text-zinc-600">
+                Choose the workflow that best matches how you want to discover
+                companies.
+              </p>
+            </div>
+
+            <div className="mt-5 grid gap-3">
+              {([
+                "ideal_customer",
+                "similar_to_company",
+                "likely_needs",
+                "specific_company",
+                "business_lists",
+              ] as ModeValue[]).map((value) => {
+                const active = mode === value;
+
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setMode(value)}
+                    className={`rounded-2xl border p-4 text-left transition ${
+                      active
+                        ? "border-zinc-900 bg-zinc-900 text-white"
+                        : "border-zinc-200 bg-white hover:border-zinc-300"
+                    }`}
+                  >
+                    <div className="text-sm font-semibold">
+                      {titleForMode(value)}
+                    </div>
+
+                    <div
+                      className={`mt-1 text-xs leading-5 ${
+                        active ? "text-zinc-200" : "text-zinc-500"
+                      }`}
+                    >
+                      {helpForMode(value)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+                    <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold text-zinc-900">
+                Step 2: Define Target
+              </h2>
+
+              <p className="text-sm text-zinc-600">
+                Keep it simple. Industry plus geography is usually enough to start.
+              </p>
             </div>
 
             <div className="mt-5 space-y-4">
-              <FieldSelect
-                label="Lead Generation Method"
-                value={mode}
-                onChange={(v) => setMode(v as ModeValue)}
-                options={[
-                  { value: "ideal_customer", label: "Ideal Customer Search" },
-                  { value: "similar_to_company", label: "Similar to an Existing Company" },
-                  { value: "likely_needs", label: "Find Companies with Likely Needs" },
-                  { value: "specific_company", label: "Analyze a Specific Company" },
-                  { value: "business_lists", label: "Source from Business Lists" },
-                ]}
-              />
-
               <FieldInput
-                label="Service Focus"
+                label="Flagship Service Focus"
                 value={serviceFocus}
                 onChange={setServiceFocus}
-                placeholder="website, mobile_app, software, ai, support, consulting"
+                placeholder="mobile_app, website, software, ai, consulting"
               />
+
               <FieldInput
                 label="Geography"
                 value={geography}
                 onChange={setGeography}
-                placeholder="Houston, Texas, nationwide"
+                placeholder="Houston, Texas"
               />
 
-              {showIdealCustomerFields ? (
+              {mode !== "specific_company" && mode !== "business_lists" ? (
                 <>
                   <FieldInput
                     label="Industries"
                     value={industries}
                     onChange={setIndustries}
-                    placeholder="churches, chambers, nonprofits, healthcare"
+                    placeholder="churches, chambers, restaurants, healthcare, nonprofits"
                   />
+
                   <FieldInput
-                    label="Company Sizes"
+                    label="Company Size"
                     value={companySizes}
                     onChange={setCompanySizes}
                     placeholder="small business, midsize, enterprise"
                   />
+
                   <FieldInput
                     label="Buyer Titles"
                     value={buyerTitles}
                     onChange={setBuyerTitles}
-                    placeholder="owner, founder, executive director, COO"
+                    placeholder="owner, founder, executive director, COO, pastor"
                   />
                 </>
               ) : null}
 
-              {showLookalikeFields ? (
+              {mode === "similar_to_company" ? (
                 <FieldSelect
-                  label="Benchmark Company"
+                  label="Find companies similar to"
                   value={selectedCompanyId}
                   onChange={setSelectedCompanyId}
                   options={[
                     { value: "", label: "Select a company" },
                     ...safeCompanies.map((company) => ({
                       value: company.id,
-                      label: `${company.name || "Unnamed"}${company.industry ? ` • ${company.industry}` : ""}`,
+                      label: `${company.name || "Unnamed Company"}${
+                        company.industry ? ` · ${company.industry}` : ""
+                      }`,
                     })),
                   ]}
                 />
               ) : null}
 
-              {showNeedsFields ? (
-                <>
-                  <FieldInput
-                    label="Industries"
-                    value={industries}
-                    onChange={setIndustries}
-                    placeholder="barbers, churches, chambers, restaurants"
-                  />
-                  <FieldInput
-                    label="Buyer Titles"
-                    value={buyerTitles}
-                    onChange={setBuyerTitles}
-                    placeholder="owner, pastor, executive director, office manager"
-                  />
-                </>
-              ) : null}
-
-              {showSpecificFields ? (
+              {mode === "specific_company" ? (
                 <>
                   <FieldInput
                     label="Company Name"
                     value={companyName}
                     onChange={setCompanyName}
-                    placeholder="Maple Tree Kids Daycare"
+                    placeholder="Company name"
                   />
+
                   <FieldInput
                     label="Website"
                     value={website}
                     onChange={setWebsite}
-                    placeholder="mapletreekids.com"
+                    placeholder="https://example.com"
                   />
                 </>
               ) : null}
 
-              {showBusinessListFields ? (
+              {mode === "business_lists" ? (
                 <>
                   <FieldInput
                     label="Source Label"
                     value={sourceLabel}
                     onChange={setSourceLabel}
-                    placeholder="Houston Business Directory"
+                    placeholder="Houston Chamber Directory"
                   />
+
                   <FieldInput
                     label="Source URL"
                     value={sourceUrl}
                     onChange={setSourceUrl}
                     placeholder="https://example.com/directory"
                   />
+
                   <FieldTextarea
-                    label="Business Listings / Directory Blocks"
+                    label="Business Listings"
                     value={candidateInput}
                     onChange={setCandidateInput}
-                    rows={10}
-                    placeholder={`Paste copied directory rows or business blocks here.
+                    rows={8}
+                    placeholder={`Paste business listings here.
 
 Example:
-Greater Houston Black Chamber | ghbc.org | info@ghbc.org | Houston, TX
 Maple Tree Kids Daycare | mapletree.com | info@mapletree.com | Rosenberg, TX`}
                   />
                 </>
@@ -963,12 +1171,12 @@ Maple Tree Kids Daycare | mapletree.com | info@mapletree.com | Rosenberg, TX`}
                 value={notes}
                 onChange={setNotes}
                 rows={4}
-                placeholder="What kinds of signs should Freshware prioritize?"
+                placeholder="Tell Freshware what to prioritize. Example: find businesses that need mobile apps, booking, client portals, automation, or better customer engagement."
               />
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <FieldSelect
-                  label="Max New Leads"
+                  label="New Leads To Find"
                   value={generateLimit}
                   onChange={setGenerateLimit}
                   options={[
@@ -979,8 +1187,9 @@ Maple Tree Kids Daycare | mapletree.com | info@mapletree.com | Rosenberg, TX`}
                     { value: "100", label: "100" },
                   ]}
                 />
+
                 <FieldSelect
-                  label="Website Analysis Limit"
+                  label="Saved Leads To Research"
                   value={analyzeLimit}
                   onChange={setAnalyzeLimit}
                   options={[
@@ -992,64 +1201,80 @@ Maple Tree Kids Daycare | mapletree.com | info@mapletree.com | Rosenberg, TX`}
                   ]}
                 />
               </div>
+            </div>
+          </div>
 
-              <div className="flex flex-wrap gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleGenerate}
-                  disabled={submitting}
-                  className="rounded-2xl bg-black px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
-                >
-                  {submitting ? "Generating..." : "Generate Leads"}
-                </button>
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold text-zinc-900">
+                Step 3: Run Lead Actions
+              </h2>
 
-                <button
-                  type="button"
-                  onClick={handleAnalyzeWebsites}
-                  disabled={analyzing || !leadsWithWebsites.length}
-                  className="rounded-2xl border border-black/10 px-4 py-3 text-sm font-semibold disabled:opacity-60"
-                >
-                  {analyzing ? "Analyzing..." : `Analyze Websites (${Math.min(Number(analyzeLimit || 25), leadsWithWebsites.length)})`}
-                </button>
+              <p className="text-sm text-zinc-600">
+                Find new companies first, then research saved leads to enrich contact info,
+                website intelligence, and app-store presence.
+              </p>
+            </div>
 
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="rounded-2xl border border-black/10 px-4 py-3 text-sm font-semibold"
-                >
-                  Upload CSV
-                </button>
-              </div>
+            <div className="mt-5 grid gap-3">
+              <button
+                type="button"
+                onClick={handleFindLeads}
+                disabled={submitting}
+                className="rounded-2xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-60"
+              >
+                {submitting ? "Finding New Leads..." : "Find New Leads"}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleAnalyzeLeads}
+                disabled={analyzing || !safeLeads.length}
+                className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-50 disabled:opacity-60"
+              >
+                {analyzing
+                  ? "Researching Saved Leads..."
+                  : `Research Saved Leads (${Math.min(
+                      Number(analyzeLimit || 25),
+                      safeLeads.length
+                    )})`}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-50"
+              >
+                Upload CSV File
+              </button>
 
               <input
                 ref={fileInputRef}
                 type="file"
                 accept=".csv,text/csv"
                 className="hidden"
-                onChange={(e) => {
+                onChange={async (e) => {
                   const file = e.target.files?.[0];
-                  if (file) handleCsvFile(file);
+                  if (!file) return;
+
+                  const text = await file.text();
+                  setCsvText(text);
+                  setSuccess(`Loaded CSV file: ${file.name}`);
+                  setError("");
                 }}
               />
-
-              {success ? (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-                  {success}
-                </div>
-              ) : null}
-
-              {error ? (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                  {error}
-                </div>
-              ) : null}
             </div>
-          </section>
+          </div>
 
-          <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-            <div className="text-lg font-semibold text-gray-900">CSV / Directory Import</div>
-            <div className="mt-1 text-sm text-gray-500">
-              Paste CSV text manually or load it from a file, then import.
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold text-zinc-900">
+                CSV Import
+              </h2>
+
+              <p className="text-sm text-zinc-600">
+                Paste or upload a CSV, then import those businesses into the queue.
+              </p>
             </div>
 
             <div className="mt-5 space-y-4">
@@ -1064,7 +1289,7 @@ Maple Tree Kids Daycare | mapletree.com | info@mapletree.com | Rosenberg, TX`}
                 label="CSV Text"
                 value={csvText}
                 onChange={setCsvText}
-                rows={10}
+                rows={8}
                 placeholder={`company_name,website,email,city,state,industry
 Maple Tree Kids Daycare,mapletree.com,info@mapletree.com,Rosenberg,TX,Daycare`}
               />
@@ -1073,69 +1298,72 @@ Maple Tree Kids Daycare,mapletree.com,info@mapletree.com,Rosenberg,TX,Daycare`}
                 type="button"
                 onClick={handleImportCsv}
                 disabled={importing || !csvText.trim()}
-                className="rounded-2xl bg-black px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                className="w-full rounded-2xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-60"
               >
-                {importing ? "Importing..." : "Import CSV Leads"}
+                {importing ? "Importing Leads..." : "Import CSV Leads"}
               </button>
             </div>
-          </section>
+          </div>
 
-          <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-            <div className="text-lg font-semibold text-gray-900">Quick Views</div>
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              <QuickViewButton label="All Leads" active={savedView === "all"} onClick={() => setSavedView("all")} />
-              <QuickViewButton label="Manual Leads" active={savedView === "manual_leads"} onClick={() => setSavedView("manual_leads")} />
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="space-y-1">
+              <h2 className="text-xl font-semibold text-zinc-900">
+                Quick Views
+              </h2>
+
+              <p className="text-sm text-zinc-600">
+                Filter the lead queue by the next action you want to take.
+              </p>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              <QuickViewButton label="All" active={savedView === "all"} onClick={() => setSavedView("all")} />
               <QuickViewButton label="Not Contacted" active={savedView === "not_contacted"} onClick={() => setSavedView("not_contacted")} />
-              <QuickViewButton label="Website Opportunities" active={savedView === "website_opportunities"} onClick={() => setSavedView("website_opportunities")} />
-              <QuickViewButton label="Analyzed Leads" active={savedView === "analyzed_leads"} onClick={() => setSavedView("analyzed_leads")} />
-              <QuickViewButton label="Converted" active={savedView === "converted"} onClick={() => setSavedView("converted")} />
-              <QuickViewButton label="New This Week" active={savedView === "new_this_week"} onClick={() => setSavedView("new_this_week")} />
               <QuickViewButton label="Contact Found" active={savedView === "contact_found"} onClick={() => setSavedView("contact_found")} />
-              <QuickViewButton label="Follow-Up Due" active={savedView === "follow_up_due"} onClick={() => setSavedView("follow_up_due")} />
               <QuickViewButton label="Ready to Email" active={savedView === "ready_to_email"} onClick={() => setSavedView("ready_to_email")} />
-              <QuickViewButton label="80+ Uncontacted" active={savedView === "high_score_uncontacted"} onClick={() => setSavedView("high_score_uncontacted")} />
+              <QuickViewButton label="80+ Score" active={savedView === "high_score_uncontacted"} onClick={() => setSavedView("high_score_uncontacted")} />
+              <QuickViewButton label="Analyzed" active={savedView === "analyzed_leads"} onClick={() => setSavedView("analyzed_leads")} />
+              <QuickViewButton label="iOS App" active={savedView === "has_ios_app"} onClick={() => setSavedView("has_ios_app")} />
+              <QuickViewButton label="Android App" active={savedView === "has_android_app"} onClick={() => setSavedView("has_android_app")} />
+              <QuickViewButton label="No App Found" active={savedView === "no_app_found"} onClick={() => setSavedView("no_app_found")} />
+              <QuickViewButton label="Follow-Up Due" active={savedView === "follow_up_due"} onClick={() => setSavedView("follow_up_due")} />
               <QuickViewButton label="Draft Ready" active={savedView === "draft_ready"} onClick={() => setSavedView("draft_ready")} />
-              <QuickViewButton label="Sent" active={savedView === "sent"} onClick={() => setSavedView("sent")} />
-              <QuickViewButton label="Manual Send Required" active={savedView === "manual_send_required"} onClick={() => setSavedView("manual_send_required")} />
-              <QuickViewButton label="Responded" active={savedView === "responded"} onClick={() => setSavedView("responded")} />
+              <QuickViewButton label="Converted" active={savedView === "converted"} onClick={() => setSavedView("converted")} />
             </div>
-          </section>
+          </div>
         </div>
-
-        <div className="space-y-6 xl:col-span-4">
-          <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="space-y-6">
+          <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <div className="text-xl font-semibold text-gray-900">Lead Queue</div>
-                <div className="mt-1 text-sm text-gray-500">
-                  {filteredLeads.length} visible lead(s) · {safeLeads.length} total
-                </div>
+                <h2 className="text-xl font-semibold text-zinc-900">
+                  Step 4: Work the Lead Queue
+                </h2>
+
+                <p className="mt-1 text-sm text-zinc-600">
+                  Select a lead to review research, contact info, app-store status,
+                  outreach, follow-up, and conversion options.
+                </p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
-                  With websites: {leadsWithWebsites.length}
-                </span>
-                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
-                  Analyzed: {analyzedCount}
-                </span>
-                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
-                  80+: {score80Count}
-                </span>
-                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
-                  Directory: {directoryLeadCount}
-                </span>
-                <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
-                  Contact found: {contactFoundCount}
-                </span>
-              </div>
+
+              <button
+                type="button"
+                onClick={handleBulkDeleteVisible}
+                disabled={bulkDeleting || !filteredLeads.length}
+                className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+              >
+                {bulkDeleting
+                  ? "Deleting..."
+                  : `Delete Visible (${filteredLeads.length})`}
+              </button>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               <FieldInput
-                label="Search"
+                label="Search Leads"
                 value={search}
                 onChange={setSearch}
-                placeholder="Company, source, need, website, email"
+                placeholder="Company, website, email, app, need"
               />
 
               <FieldSelect
@@ -1156,10 +1384,10 @@ Maple Tree Kids Daycare,mapletree.com,info@mapletree.com,Rosenberg,TX,Daycare`}
                 onChange={setStatusFilter}
                 options={[
                   { value: "all", label: "All Statuses" },
-                  { value: "NOT_CONTACTED", label: "NOT_CONTACTED" },
-                  { value: "CONTACTED", label: "CONTACTED" },
-                  { value: "RESPONDED", label: "RESPONDED" },
-                  { value: "CLOSED", label: "CLOSED" },
+                  { value: "NOT_CONTACTED", label: "Not Contacted" },
+                  { value: "CONTACTED", label: "Contacted" },
+                  { value: "RESPONDED", label: "Responded" },
+                  { value: "CLOSED", label: "Closed" },
                 ]}
               />
 
@@ -1169,12 +1397,12 @@ Maple Tree Kids Daycare,mapletree.com,info@mapletree.com,Rosenberg,TX,Daycare`}
                 onChange={setServiceFilter}
                 options={[
                   { value: "all", label: "All Services" },
-                  { value: "website", label: "website" },
-                  { value: "mobile_app", label: "mobile_app" },
-                  { value: "software", label: "software" },
-                  { value: "ai", label: "ai" },
-                  { value: "support", label: "support" },
-                  { value: "consulting", label: "consulting" },
+                  { value: "mobile_app", label: "Mobile App" },
+                  { value: "website", label: "Website" },
+                  { value: "software", label: "Software" },
+                  { value: "ai", label: "AI" },
+                  { value: "support", label: "Support" },
+                  { value: "consulting", label: "Consulting" },
                 ]}
               />
 
@@ -1184,9 +1412,15 @@ Maple Tree Kids Daycare,mapletree.com,info@mapletree.com,Rosenberg,TX,Daycare`}
                 onChange={setSourceTypeFilter}
                 options={[
                   { value: "all", label: "All Source Types" },
-                  { value: "manual", label: "manual" },
-                  { value: "directory", label: "directory" },
-                  { value: "csv", label: "csv" },
+                  { value: "manual", label: "Manual" },
+                  { value: "directory", label: "Directory" },
+                  { value: "csv", label: "CSV" },
+                  { value: "brave", label: "Brave Search" },
+                  { value: "serpapi", label: "SerpAPI" },
+                  { value: "bing", label: "Bing Search" },
+                  { value: "google_cse", label: "Google Custom Search" },
+                  { value: "duckduckgo", label: "DuckDuckGo" },
+                  { value: "web_search", label: "Web Search" },
                 ]}
               />
 
@@ -1196,462 +1430,663 @@ Maple Tree Kids Daycare,mapletree.com,info@mapletree.com,Rosenberg,TX,Daycare`}
                 onChange={setSourceLabelFilter}
                 options={[
                   { value: "all", label: "All Source Labels" },
-                  ...uniqueSourceLabels.map((label) => ({ value: label, label })),
+                  ...uniqueSourceLabels.map((label) => ({
+                    value: label,
+                    label,
+                  })),
                 ]}
               />
             </div>
 
-            <div className="mt-5 max-h-[900px] space-y-3 overflow-auto pr-1">
-              {filteredLeads.length ? (
-                filteredLeads.map((lead) => {
-                  const score = Number(lead.total_score || 0);
-                  const selected = lead.id === selectedLead?.id;
-                  const outreachStatus = String(lead.outreach_status || "NOT_CONTACTED");
-                  return (
-                    <button
-                      key={lead.id}
-                      type="button"
-                      onClick={() => setSelectedLeadId(lead.id)}
-                      className={`w-full rounded-2xl border p-4 text-left transition ${
-                        selected ? "border-black bg-black text-white" : "border-black/10 bg-white hover:bg-gray-50"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className={`truncate text-sm font-semibold ${selected ? "text-white" : "text-gray-900"}`}>
-                            {lead.company_name || "Unnamed Lead"}
-                          </div>
-                          <div className={`mt-1 text-xs ${selected ? "text-white/70" : "text-gray-500"}`}>
-                            {lead.source_label || lead.source_type || "Unknown source"}
-                          </div>
-                          <div className={`mt-1 truncate text-xs ${selected ? "text-white/70" : "text-gray-500"}`}>
-                            {lead.website || lead.contact_email || "No website or email"}
-                          </div>
-                        </div>
+            <div className="mt-6 grid gap-4 xl:grid-cols-[380px,1fr]">
+              <div className="max-h-[920px] space-y-3 overflow-auto pr-1">
+                {filteredLeads.length ? (
+                  filteredLeads.map((lead) => {
+                    const selected = String(lead.id) === String(selectedLead?.id);
+                    const score = Number(lead.total_score || 0);
+                    const outreachStatus = String(
+                      lead.outreach_status || "NOT_CONTACTED"
+                    );
+                    const contactFound = hasLeadContact(lead);
+                    const hasApp = Boolean(lead.has_ios_app || lead.has_android_app);
 
-                        <div className="flex shrink-0 flex-col gap-2">
-                          <span
-                            className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                              selected ? "border-white/20 bg-white/10 text-white" : scoreChipClass(score)
-                            }`}
-                          >
-                            Score {score}
-                          </span>
-                          <span
-                            className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                              selected ? "border-white/20 bg-white/10 text-white" : statusChipClass(outreachStatus)
-                            }`}
-                          >
-                            {outreachStatus}
-                          </span>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="rounded-2xl border border-dashed border-black/10 p-6 text-sm text-gray-500">
-                  No leads match these filters.
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
-
-        <div className="space-y-6 xl:col-span-4">
-          {selectedLead ? (
-            <>
-              <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xl font-semibold text-gray-900">
-                      {selectedLead.company_name || "Unnamed Lead"}
-                    </div>
-                    <div className="mt-1 break-all text-sm text-gray-500">
-                      {selectedLead.website || selectedLead.contact_email || "No website / email"}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${scoreChipClass(Number(selectedLead.total_score || 0))}`}>
-                        Score {Number(selectedLead.total_score || 0)}
-                      </span>
-                      <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusChipClass(String(selectedLead.outreach_status || "NOT_CONTACTED"))}`}>
-                        {String(selectedLead.outreach_status || "NOT_CONTACTED")}
-                      </span>
-                      {selectedLead.converted_company_id || selectedLead.converted_opportunity_id ? (
-                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                          Converted
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {selectedLead.converted_company_id ? (
-                      <Link
-                        href={`/dashboard/companies/${selectedLead.converted_company_id}`}
-                        className="rounded-2xl border border-black/10 px-4 py-2 text-sm font-semibold"
-                      >
-                        Open Company
-                      </Link>
-                    ) : null}
-                    {selectedLead.converted_opportunity_id ? (
-                      <Link
-                        href={`/dashboard/opportunities/${selectedLead.converted_opportunity_id}`}
-                        className="rounded-2xl border border-black/10 px-4 py-2 text-sm font-semibold"
-                      >
-                        Open Opportunity
-                      </Link>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                  <InfoCard title="Recommended Service" value={serviceLabel(selectedLead.recommended_service_line)} />
-                  <InfoCard title="Detected Need" value={pretty(selectedLead.detected_need)} />
-                  <InfoCard title="Source" value={pretty(selectedLead.source_label || selectedLead.source_type)} />
-                  <InfoCard title="Created" value={fmtDate(selectedLead.created_at)} />
-                </div>
-
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                  <TextCard title="AI Summary" value={selectedLead.ai_summary} />
-                  <TextCard title="AI Reasoning" value={selectedLead.ai_reasoning} />
-                </div>
-
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                  <TextCard title="Outreach Angle" value={selectedLead.outreach_angle} />
-                  <TextCard title="First Touch Message" value={selectedLead.first_touch_message} />
-                </div>
-              </section>
-
-              <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-                <div className="text-lg font-semibold text-gray-900">Contact + Website Intelligence</div>
-
-                <div className="mt-5 grid gap-4 md:grid-cols-2">
-                  <div className="rounded-2xl border border-black/10 p-4">
-                    <div className="text-sm font-semibold text-gray-900">Contact Intelligence</div>
-
-                    <div className="mt-3 space-y-3 text-sm text-gray-700">
-                      <div>
-                        <div className="text-xs font-semibold text-gray-500">Primary Email</div>
-                        <div className="mt-1 break-all">{pretty(selectedLead.contact_email)}</div>
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold text-gray-500">Primary Phone</div>
-                        <div className="mt-1">{pretty(selectedLead.contact_phone)}</div>
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold text-gray-500">Discovered Emails</div>
-                        {discoveredEmails.length ? (
-                          <ul className="mt-1 space-y-1">
-                            {discoveredEmails.map((email, idx) => (
-                              <li key={`${email}-${idx}`} className="break-all">
-                                {email}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <div className="mt-1 text-gray-500">None found</div>
-                        )}
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold text-gray-500">Discovered Phones</div>
-                        {discoveredPhones.length ? (
-                          <ul className="mt-1 space-y-1">
-                            {discoveredPhones.map((phone, idx) => (
-                              <li key={`${phone}-${idx}`}>{phone}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <div className="mt-1 text-gray-500">None found</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-black/10 p-4">
-                    <div className="text-sm font-semibold text-gray-900">Website Intelligence</div>
-
-                    <div className="mt-3 space-y-3 text-sm text-gray-700">
-                      <div>
-                        <div className="text-xs font-semibold text-gray-500">Analyzed</div>
-                        <div className="mt-1">{selectedLead.website_analyzed_at ? "Yes" : "No"}</div>
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold text-gray-500">Analysis Model</div>
-                        <div className="mt-1">{pretty(selectedLead.website_analysis_model)}</div>
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold text-gray-500">Digital Maturity</div>
-                        <div className="mt-1">
-                          {pretty(
-                            selectedLead.website_analysis?.digital_maturity ||
-                              selectedLead.website_analysis?.website_analysis?.digital_maturity
-                          )}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-xs font-semibold text-gray-500">Contact Page URL</div>
-                        <div className="mt-1 break-all">{pretty(selectedLead.contact_page_url)}</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-                <div className="text-lg font-semibold text-gray-900">Outreach Workspace</div>
-
-                <div className="mt-5 grid gap-6 md:grid-cols-2">
-                  <div className="space-y-4">
-                    <FieldInput
-                      label="Recipient Email"
-                      value={recipientEmail}
-                      onChange={setRecipientEmail}
-                      placeholder="recipient@company.com"
-                    />
-                    <FieldInput
-                      label="Subject"
-                      value={outreachSubject}
-                      onChange={setOutreachSubject}
-                      placeholder="Quick idea for your company"
-                    />
-                    <FieldTextarea
-                      label="Draft"
-                      value={outreachDraft}
-                      onChange={setOutreachDraft}
-                      rows={10}
-                      placeholder="Generate or edit your outreach here"
-                    />
-                    <FieldTextarea
-                      label="Outreach Notes"
-                      value={outreachNotes}
-                      onChange={setOutreachNotes}
-                      rows={3}
-                      placeholder="Internal notes about outreach"
-                    />
-
-                    <div className="flex flex-wrap gap-2">
+                    return (
                       <button
+                        key={lead.id}
                         type="button"
-                        onClick={generateOutreach}
-                        disabled={draftSaving}
-                        className="rounded-2xl border border-black/10 px-4 py-3 text-sm font-semibold disabled:opacity-60"
+                        onClick={() => setSelectedLeadId(String(lead.id))}
+                        className={`w-full rounded-2xl border p-4 text-left transition ${
+                          selected
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-200 bg-white hover:bg-zinc-50"
+                        }`}
                       >
-                        {draftSaving ? "Working..." : "Generate Outreach"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={generateFollowUp}
-                        disabled={draftSaving}
-                        className="rounded-2xl border border-black/10 px-4 py-3 text-sm font-semibold disabled:opacity-60"
-                      >
-                        {draftSaving ? "Working..." : "Generate Follow-Up"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={sendOutreach}
-                        disabled={sendSaving}
-                        className="rounded-2xl bg-black px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
-                      >
-                        {sendSaving ? "Sending..." : "Send Outreach"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={markEmailSent}
-                        disabled={manualSentSaving}
-                        className="rounded-2xl border border-black/10 px-4 py-3 text-sm font-semibold disabled:opacity-60"
-                      >
-                        {manualSentSaving ? "Logging..." : "Mark Email Sent"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={saveOutreachStatus}
-                        disabled={outreachSaving}
-                        className="rounded-2xl border border-black/10 px-4 py-3 text-sm font-semibold disabled:opacity-60"
-                      >
-                        {outreachSaving ? "Saving..." : "Save Outreach Status"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <FieldInput
-                      label="Follow-Up Date"
-                      value={followUpDate}
-                      onChange={setFollowUpDate}
-                      placeholder="YYYY-MM-DDTHH:MM"
-                    />
-                    <FieldSelect
-                      label="Follow-Up Status"
-                      value={followUpStatus}
-                      onChange={setFollowUpStatus}
-                      options={[
-                        { value: "NONE", label: "NONE" },
-                        { value: "SCHEDULED", label: "SCHEDULED" },
-                        { value: "DUE", label: "DUE" },
-                        { value: "COMPLETED", label: "COMPLETED" },
-                        { value: "PAUSED", label: "PAUSED" },
-                      ]}
-                    />
-                    <FieldTextarea
-                      label="Follow-Up Notes"
-                      value={followUpNotes}
-                      onChange={setFollowUpNotes}
-                      rows={4}
-                      placeholder="Notes for the next touchpoint"
-                    />
-
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={saveFollowUp}
-                        disabled={followUpSaving}
-                        className="rounded-2xl border border-black/10 px-4 py-3 text-sm font-semibold disabled:opacity-60"
-                      >
-                        {followUpSaving ? "Saving..." : "Save Follow-Up"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => convertLead(false)}
-                        disabled={convertSaving}
-                        className="rounded-2xl border border-black/10 px-4 py-3 text-sm font-semibold disabled:opacity-60"
-                      >
-                        {convertSaving ? "Converting..." : "Convert to Company"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => convertLead(true)}
-                        disabled={convertSaving}
-                        className="rounded-2xl bg-black px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
-                      >
-                        {convertSaving ? "Converting..." : "Convert to Company + Opportunity"}
-                      </button>
-                    </div>
-
-                    <div className="border-t border-black/10 pt-4">
-                      <FieldInput
-                        label="Reply Email"
-                        value={replyEmail}
-                        onChange={setReplyEmail}
-                        placeholder="person@company.com"
-                      />
-                      <FieldTextarea
-                        label="Reply Message"
-                        value={replyMessage}
-                        onChange={setReplyMessage}
-                        rows={4}
-                        placeholder="Log an inbound response"
-                      />
-                      <div className="mt-3 flex gap-2">
-                        <button
-                          type="button"
-                          onClick={logReply}
-                          disabled={replySaving}
-                          className="rounded-2xl border border-black/10 px-4 py-3 text-sm font-semibold disabled:opacity-60"
-                        >
-                          {replySaving ? "Saving..." : "Log Reply"}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="border-t border-black/10 pt-4">
-                      <FieldTextarea
-                        label="Outcome Notes"
-                        value={outcomeNotes}
-                        onChange={setOutcomeNotes}
-                        rows={4}
-                        placeholder="Why won, lost, or no response?"
-                      />
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => markOutcome("WON")}
-                          disabled={outcomeSaving}
-                          className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 disabled:opacity-60"
-                        >
-                          Mark WON
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => markOutcome("LOST")}
-                          disabled={outcomeSaving}
-                          className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 disabled:opacity-60"
-                        >
-                          Mark LOST
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => markOutcome("NO_RESPONSE")}
-                          disabled={outcomeSaving}
-                          className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm font-semibold text-gray-700 disabled:opacity-60"
-                        >
-                          Mark NO_RESPONSE
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-                <div className="text-lg font-semibold text-gray-900">Outreach History</div>
-                <div className="mt-4 space-y-3">
-                  {loadingEvents ? (
-                    <div className="text-sm text-gray-500">Loading outreach history...</div>
-                  ) : events.length ? (
-                    events.map((event, idx) => (
-                      <div key={event.id || idx} className="rounded-2xl border border-black/10 p-4">
                         <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-gray-900">
-                              {pretty(event.event_type)}
+                          <div className="min-w-0">
+                            <div
+                              className={`truncate text-sm font-semibold ${
+                                selected ? "text-white" : "text-zinc-900"
+                              }`}
+                            >
+                              {lead.company_name || "Unnamed Lead"}
                             </div>
-                            <div className="mt-1 text-xs text-gray-500">
-                              {pretty(event.channel)} · {pretty(event.direction)} · {pretty(event.delivery_status)}
+
+                            <div
+                              className={`mt-1 truncate text-xs ${
+                                selected ? "text-zinc-300" : "text-zinc-500"
+                              }`}
+                            >
+                              {lead.website || lead.contact_email || "No website or email"}
+                            </div>
+
+                            <div
+                              className={`mt-2 flex flex-wrap gap-1 text-[11px] ${
+                                selected ? "text-zinc-200" : "text-zinc-600"
+                              }`}
+                            >
+                              {contactFound ? (
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 ${
+                                    selected
+                                      ? "border-white/20 bg-white/10"
+                                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  }`}
+                                >
+                                  Contact Found
+                                </span>
+                              ) : (
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 ${
+                                    selected
+                                      ? "border-white/20 bg-white/10"
+                                      : "border-zinc-200 bg-zinc-50 text-zinc-600"
+                                  }`}
+                                >
+                                  No Contact
+                                </span>
+                              )}
+
+                              {hasApp ? (
+                                <span
+                                  className={`rounded-full border px-2 py-0.5 ${
+                                    selected
+                                      ? "border-white/20 bg-white/10"
+                                      : "border-blue-200 bg-blue-50 text-blue-700"
+                                  }`}
+                                >
+                                  App Found
+                                </span>
+                              ) : null}
                             </div>
                           </div>
-                          <div className="text-xs text-gray-500">{fmtDate(event.created_at)}</div>
+
+                          <div className="flex shrink-0 flex-col gap-2">
+                            <span
+                              className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                                selected
+                                  ? "border-white/20 bg-white/10 text-white"
+                                  : scoreChipClass(score)
+                              }`}
+                            >
+                              {score}
+                            </span>
+
+                            <span
+                              className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                                selected
+                                  ? "border-white/20 bg-white/10 text-white"
+                                  : statusChipClass(outreachStatus)
+                              }`}
+                            >
+                              {outreachStatus}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-500">
+                    No leads match your current filters.
+                  </div>
+                )}
+              </div>
+
+              <div>
+                {selectedLead ? (
+                  <div className="space-y-6">
+                    <section className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0">
+                          <h3 className="text-2xl font-semibold text-zinc-900">
+                            {selectedLead.company_name || "Unnamed Lead"}
+                          </h3>
+
+                          <div className="mt-1 break-all text-sm text-zinc-500">
+                            {selectedLead.website ||
+                              selectedLead.contact_email ||
+                              "No website or email"}
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <span
+                              className={`rounded-full border px-3 py-1 text-xs font-semibold ${scoreChipClass(
+                                Number(selectedLead.total_score || 0)
+                              )}`}
+                            >
+                              Score {Number(selectedLead.total_score || 0)}
+                            </span>
+
+                            <span
+                              className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusChipClass(
+                                String(selectedLead.outreach_status || "NOT_CONTACTED")
+                              )}`}
+                            >
+                              {String(
+                                selectedLead.outreach_status || "NOT_CONTACTED"
+                              )}
+                            </span>
+
+                            <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                              {appStatusLabel(selectedLead)}
+                            </span>
+
+                            {selectedLead.converted_company_id ||
+                            selectedLead.converted_opportunity_id ? (
+                              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                                Converted
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
 
-                        {event.subject ? (
-                          <div className="mt-3 text-sm text-gray-700">
-                            <span className="font-semibold">Subject:</span> {event.subject}
-                          </div>
-                        ) : null}
+                        <div className="flex flex-wrap gap-2">
+                          {selectedLead.converted_company_id ? (
+                            <Link
+                              href={`/dashboard/companies/${selectedLead.converted_company_id}`}
+                              className="rounded-2xl border border-zinc-200 px-4 py-2 text-sm font-semibold transition hover:bg-zinc-50"
+                            >
+                              Open Company
+                            </Link>
+                          ) : null}
 
-                        {event.recipient_email ? (
-                          <div className="mt-1 text-sm text-gray-700 break-all">
-                            <span className="font-semibold">Recipient:</span> {event.recipient_email}
-                          </div>
-                        ) : null}
+                          {selectedLead.converted_opportunity_id ? (
+                            <Link
+                              href={`/dashboard/opportunities/${selectedLead.converted_opportunity_id}`}
+                              className="rounded-2xl border border-zinc-200 px-4 py-2 text-sm font-semibold transition hover:bg-zinc-50"
+                            >
+                              Open Opportunity
+                            </Link>
+                          ) : null}
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteLead(String(selectedLead.id))}
+                            disabled={deleting}
+                            className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+                          >
+                            {deleting ? "Deleting..." : "Delete Lead"}
+                          </button>
+                        </div>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-sm text-gray-500">No outreach history yet.</div>
-                  )}
-                </div>
-              </section>
-            </>
-          ) : (
-            <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-              <div className="text-lg font-semibold text-gray-900">No Lead Selected</div>
-              <div className="mt-2 text-sm text-gray-500">
-                Select a lead from the queue to work outreach, follow-up, and conversion.
+
+                      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                        <InfoCard
+                          title="Recommended Service"
+                          value={serviceLabel(selectedLead.recommended_service_line)}
+                        />
+                        <InfoCard
+                          title="Detected Need"
+                          value={pretty(selectedLead.detected_need)}
+                        />
+                        <InfoCard
+                          title="Source"
+                          value={pretty(
+                            selectedLead.source_label || selectedLead.source_type
+                          )}
+                        />
+                        <InfoCard
+                          title="Created"
+                          value={fmtDate(selectedLead.created_at)}
+                        />
+                      </div>
+
+                      <div className="mt-6 grid gap-4 md:grid-cols-2">
+                        <TextCard title="AI Summary" value={selectedLead.ai_summary} />
+                        <TextCard title="AI Reasoning" value={selectedLead.ai_reasoning} />
+                        <TextCard title="Outreach Angle" value={selectedLead.outreach_angle} />
+                        <TextCard
+                          title="First Touch Message"
+                          value={selectedLead.first_touch_message}
+                        />
+                      </div>
+                    </section>
+                                        <section className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                      <h3 className="text-xl font-semibold text-zinc-900">
+                        Contact, Website, and App Intelligence
+                      </h3>
+
+                      <div className="mt-5 grid gap-4 lg:grid-cols-3">
+                        <div className="rounded-2xl border border-zinc-200 p-4">
+                          <div className="text-sm font-semibold text-zinc-900">
+                            Contact Intelligence
+                          </div>
+
+                          <div className="mt-4 space-y-3 text-sm text-zinc-700">
+                            <InfoLine title="Primary Email" value={pretty(selectedLead.contact_email)} />
+                            <InfoLine title="Primary Phone" value={pretty(selectedLead.contact_phone)} />
+                            <InfoLine title="Contact Page" value={pretty(selectedLead.contact_page_url)} />
+
+                            <div>
+                              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                                Discovered Emails
+                              </div>
+
+                              <div className="mt-1 space-y-1">
+                                {toArray(selectedLead.discovered_emails).length ? (
+                                  toArray(selectedLead.discovered_emails).map((email, index) => (
+                                    <div key={`${email}-${index}`} className="break-all text-sm text-zinc-700">
+                                      {email}
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="text-sm text-zinc-500">None found yet</div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                                Discovered Phones
+                              </div>
+
+                              <div className="mt-1 space-y-1">
+                                {toArray(selectedLead.discovered_phones).length ? (
+                                  toArray(selectedLead.discovered_phones).map((phone, index) => (
+                                    <div key={`${phone}-${index}`} className="text-sm text-zinc-700">
+                                      {phone}
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="text-sm text-zinc-500">None found yet</div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-zinc-200 p-4">
+                          <div className="text-sm font-semibold text-zinc-900">
+                            Website Intelligence
+                          </div>
+
+                          <div className="mt-4 space-y-3 text-sm text-zinc-700">
+                            <InfoLine
+                              title="Analyzed"
+                              value={selectedLead.website_analyzed_at ? "Yes" : "No"}
+                            />
+                            <InfoLine
+                              title="Analysis Model"
+                              value={pretty(selectedLead.website_analysis_model)}
+                            />
+                            <InfoLine
+                              title="Digital Maturity"
+                              value={pretty(
+                                selectedLead.website_analysis?.digital_maturity ||
+                                  selectedLead.website_analysis?.website_analysis?.digital_maturity
+                              )}
+                            />
+                            <InfoLine
+                              title="Last Checked"
+                              value={fmtDate(selectedLead.website_analyzed_at)}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-zinc-200 p-4">
+                          <div className="text-sm font-semibold text-zinc-900">
+                            Mobile App Presence
+                          </div>
+
+                          <div className="mt-4 space-y-3 text-sm text-zinc-700">
+                            <InfoLine
+                              title="App Status"
+                              value={appStatusLabel(selectedLead)}
+                            />
+                            <InfoLine
+                              title="App Store Checked"
+                              value={fmtDate(selectedLead.app_store_checked_at)}
+                            />
+
+                            <div>
+                              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                                Apple App Store
+                              </div>
+
+                              {selectedLead.apple_app_store_url ? (
+                                <a
+                                  href={selectedLead.apple_app_store_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="mt-1 block break-all text-sm font-semibold text-blue-700 hover:underline"
+                                >
+                                  Open iOS listing
+                                </a>
+                              ) : (
+                                <div className="mt-1 text-sm text-zinc-500">
+                                  No iOS listing found
+                                </div>
+                              )}
+                            </div>
+
+                            <div>
+                              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                                Google Play Store
+                              </div>
+
+                              {selectedLead.google_play_url ? (
+                                <a
+                                  href={selectedLead.google_play_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="mt-1 block break-all text-sm font-semibold text-blue-700 hover:underline"
+                                >
+                                  Open Android listing
+                                </a>
+                              ) : (
+                                <div className="mt-1 text-sm text-zinc-500">
+                                  No Android listing found
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                      <h3 className="text-xl font-semibold text-zinc-900">
+                        Outreach Workspace
+                      </h3>
+
+                      <p className="mt-1 text-sm text-zinc-600">
+                        Generate, edit, send, and track your first-touch outreach.
+                      </p>
+
+                      <div className="mt-5 grid gap-6 lg:grid-cols-2">
+                        <div className="space-y-4">
+                          <FieldInput
+                            label="Recipient Email"
+                            value={recipientEmail}
+                            onChange={setRecipientEmail}
+                            placeholder="recipient@company.com"
+                          />
+
+                          <FieldInput
+                            label="Subject"
+                            value={outreachSubject}
+                            onChange={setOutreachSubject}
+                            placeholder="Quick idea for your company"
+                          />
+
+                          <FieldTextarea
+                            label="Draft"
+                            value={outreachDraft}
+                            onChange={setOutreachDraft}
+                            rows={10}
+                            placeholder="Generate or write your outreach draft here."
+                          />
+
+                          <FieldTextarea
+                            label="Internal Outreach Notes"
+                            value={outreachNotes}
+                            onChange={setOutreachNotes}
+                            rows={4}
+                            placeholder="Internal notes about this lead."
+                          />
+
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={handleGenerateOutreach}
+                              disabled={outreachSaving}
+                              className="rounded-2xl border border-zinc-200 px-4 py-3 text-sm font-semibold transition hover:bg-zinc-50 disabled:opacity-60"
+                            >
+                              {outreachSaving ? "Generating..." : "Generate Outreach"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleSaveDraft}
+                              disabled={draftSaving}
+                              className="rounded-2xl border border-zinc-200 px-4 py-3 text-sm font-semibold transition hover:bg-zinc-50 disabled:opacity-60"
+                            >
+                              {draftSaving ? "Saving..." : "Save Draft"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleSendOutreach}
+                              disabled={sendSaving}
+                              className="rounded-2xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-60"
+                            >
+                              {sendSaving ? "Sending..." : "Send Outreach"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={handleMarkManualSent}
+                              disabled={manualSentSaving}
+                              className="rounded-2xl border border-zinc-200 px-4 py-3 text-sm font-semibold transition hover:bg-zinc-50 disabled:opacity-60"
+                            >
+                              {manualSentSaving ? "Logging..." : "Mark Manual Sent"}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          <FieldInput
+                            label="Follow-Up Date"
+                            value={followUpDate}
+                            onChange={setFollowUpDate}
+                            placeholder="YYYY-MM-DDTHH:MM"
+                          />
+
+                          <FieldSelect
+                            label="Follow-Up Status"
+                            value={followUpStatus}
+                            onChange={setFollowUpStatus}
+                            options={[
+                              { value: "NONE", label: "None" },
+                              { value: "SCHEDULED", label: "Scheduled" },
+                              { value: "DUE", label: "Due" },
+                              { value: "COMPLETED", label: "Completed" },
+                              { value: "PAUSED", label: "Paused" },
+                            ]}
+                          />
+
+                          <FieldTextarea
+                            label="Follow-Up Notes"
+                            value={followUpNotes}
+                            onChange={setFollowUpNotes}
+                            rows={4}
+                            placeholder="Notes for the next touchpoint."
+                          />
+
+                          <button
+                            type="button"
+                            onClick={handleScheduleFollowUp}
+                            disabled={followUpSaving}
+                            className="rounded-2xl border border-zinc-200 px-4 py-3 text-sm font-semibold transition hover:bg-zinc-50 disabled:opacity-60"
+                          >
+                            {followUpSaving ? "Saving..." : "Save Follow-Up"}
+                          </button>
+
+                          <div className="border-t border-zinc-200 pt-4">
+                            <FieldInput
+                              label="Reply Email"
+                              value={replyEmail}
+                              onChange={setReplyEmail}
+                              placeholder="person@company.com"
+                            />
+
+                            <div className="mt-4">
+                              <FieldTextarea
+                                label="Reply Message"
+                                value={replyMessage}
+                                onChange={setReplyMessage}
+                                rows={4}
+                                placeholder="Log a response from this lead."
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={handleSaveReply}
+                              disabled={replySaving}
+                              className="mt-3 rounded-2xl border border-zinc-200 px-4 py-3 text-sm font-semibold transition hover:bg-zinc-50 disabled:opacity-60"
+                            >
+                              {replySaving ? "Saving..." : "Log Reply"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+                                        <section className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                      <h3 className="text-xl font-semibold text-zinc-900">
+                        Conversion and Outcome
+                      </h3>
+
+                      <div className="mt-5 grid gap-6 lg:grid-cols-2">
+                        <div className="space-y-4">
+                          <FieldTextarea
+                            label="Outcome Notes"
+                            value={outcomeNotes}
+                            onChange={setOutcomeNotes}
+                            rows={5}
+                            placeholder="Why did this lead win, lose, pause, or not respond?"
+                          />
+
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleSaveOutcome("WON")}
+                              disabled={outcomeSaving}
+                              className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 disabled:opacity-60"
+                            >
+                              Mark Won
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleSaveOutcome("LOST")}
+                              disabled={outcomeSaving}
+                              className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 disabled:opacity-60"
+                            >
+                              Mark Lost
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleSaveOutcome("NO_RESPONSE")}
+                              disabled={outcomeSaving}
+                              className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm font-semibold text-zinc-700 disabled:opacity-60"
+                            >
+                              No Response
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
+                          <div className="text-sm font-semibold text-zinc-900">
+                            Convert Lead
+                          </div>
+
+                          <p className="mt-2 text-sm leading-6 text-zinc-600">
+                            Convert this lead into a company profile and opportunity when it is ready for the pipeline.
+                          </p>
+
+                          <button
+                            type="button"
+                            onClick={handleConvertLead}
+                            disabled={convertSaving}
+                            className="mt-4 w-full rounded-2xl bg-zinc-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-60"
+                          >
+                            {convertSaving ? "Converting..." : "Convert to Company + Opportunity"}
+                          </button>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
+                      <h3 className="text-xl font-semibold text-zinc-900">
+                        Outreach History
+                      </h3>
+
+                      <div className="mt-4 space-y-3">
+                        {loadingEvents ? (
+                          <div className="text-sm text-zinc-500">
+                            Loading outreach history...
+                          </div>
+                        ) : events.length ? (
+                          events.map((event, index) => (
+                            <div
+                              key={event.id || index}
+                              className="rounded-2xl border border-zinc-200 p-4"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-zinc-900">
+                                    {pretty(event.event_type)}
+                                  </div>
+
+                                  <div className="mt-1 text-xs text-zinc-500">
+                                    {pretty(event.channel)} · {pretty(event.direction)} · {pretty(event.delivery_status)}
+                                  </div>
+                                </div>
+
+                                <div className="text-xs text-zinc-500">
+                                  {fmtDate(event.created_at)}
+                                </div>
+                              </div>
+
+                              {event.subject ? (
+                                <div className="mt-3 text-sm text-zinc-700">
+                                  <span className="font-semibold">Subject:</span>{" "}
+                                  {event.subject}
+                                </div>
+                              ) : null}
+
+                              {event.recipient_email ? (
+                                <div className="mt-1 break-all text-sm text-zinc-700">
+                                  <span className="font-semibold">Recipient:</span>{" "}
+                                  {event.recipient_email}
+                                </div>
+                              ) : null}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-sm text-zinc-500">
+                            No outreach history yet.
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  </div>
+                ) : (
+                  <div className="rounded-3xl border border-dashed border-zinc-200 bg-white p-8 text-center shadow-sm">
+                    <h3 className="text-lg font-semibold text-zinc-900">
+                      No Lead Selected
+                    </h3>
+
+                    <p className="mt-2 text-sm text-zinc-500">
+                      Select a lead from the queue to view intelligence, outreach, and conversion actions.
+                    </p>
+                  </div>
+                )}
               </div>
-            </section>
-          )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1669,8 +2104,8 @@ function QuickViewButton(props: {
       onClick={props.onClick}
       className={`rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
         props.active
-          ? "border-black bg-black text-white"
-          : "border-black/10 bg-white text-gray-900 hover:bg-gray-50"
+          ? "border-zinc-900 bg-zinc-900 text-white"
+          : "border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50"
       }`}
     >
       {props.label}
@@ -1686,11 +2121,14 @@ function FieldInput(props: {
 }) {
   return (
     <div>
-      <div className="mb-1 text-xs font-semibold text-gray-500">{props.label}</div>
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {props.label}
+      </div>
+
       <input
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}
-        className="w-full rounded-2xl border border-black/10 px-3 py-2 text-sm"
+        className="w-full rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100"
         placeholder={props.placeholder}
       />
     </div>
@@ -1705,11 +2143,14 @@ function FieldSelect(props: {
 }) {
   return (
     <div>
-      <div className="mb-1 text-xs font-semibold text-gray-500">{props.label}</div>
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {props.label}
+      </div>
+
       <select
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}
-        className="w-full rounded-2xl border border-black/10 px-3 py-2 text-sm"
+        className="w-full rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100"
       >
         {props.options.map((option) => (
           <option key={`${option.value}-${option.label}`} value={option.value}>
@@ -1730,12 +2171,15 @@ function FieldTextarea(props: {
 }) {
   return (
     <div>
-      <div className="mb-1 text-xs font-semibold text-gray-500">{props.label}</div>
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {props.label}
+      </div>
+
       <textarea
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}
         rows={props.rows}
-        className="w-full rounded-2xl border border-black/10 px-3 py-2 text-sm"
+        className="w-full rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-zinc-400 focus:ring-4 focus:ring-zinc-100"
         placeholder={props.placeholder}
       />
     </div>
@@ -1744,19 +2188,41 @@ function FieldTextarea(props: {
 
 function InfoCard(props: { title: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-black/10 p-4">
-      <div className="text-xs font-semibold text-gray-500">{props.title}</div>
-      <div className="mt-2 text-sm text-gray-900">{props.value}</div>
+    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {props.title}
+      </div>
+
+      <div className="mt-2 break-words text-sm font-semibold text-zinc-900">
+        {props.value}
+      </div>
     </div>
   );
 }
 
 function TextCard(props: { title: string; value?: string | null }) {
   return (
-    <div className="rounded-2xl border border-black/10 p-4">
-      <div className="text-xs font-semibold text-gray-500">{props.title}</div>
-      <div className="mt-2 whitespace-pre-wrap text-sm text-gray-700">
+    <div className="rounded-2xl border border-zinc-200 p-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {props.title}
+      </div>
+
+      <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-zinc-700">
         {props.value || "No content yet."}
+      </div>
+    </div>
+  );
+}
+
+function InfoLine(props: { title: string; value: string }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        {props.title}
+      </div>
+
+      <div className="mt-1 break-all text-sm text-zinc-700">
+        {props.value}
       </div>
     </div>
   );
